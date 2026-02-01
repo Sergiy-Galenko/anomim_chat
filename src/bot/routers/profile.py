@@ -6,6 +6,8 @@ from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
 from ..utils.constants import RULES_TEXT, STATE_CHATTING
 from ..utils.admin import is_admin
+from ..utils.interests import parse_interests
+from ..utils.premium import format_premium_until, is_premium_until
 from ..utils.users import ensure_user, get_state, is_banned
 
 router = Router()
@@ -22,6 +24,12 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
 
     user = await db.get_user(user_id)
     state = await get_state(db, user_id)
+    interests = parse_interests(user["interests"] or "")
+    interest_text = ", ".join(interests) if interests else "—"
+    premium_until = user["premium_until"] or ""
+    premium_active = is_premium_until(premium_until)
+    premium_line = "⭐ Premium" if premium_active else "Звичайний"
+    premium_until_text = format_premium_until(premium_until) if premium_active else "—"
 
     text = (
         "Ваш профіль:\n"
@@ -29,7 +37,9 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
         f"Дата реєстрації: {user['created_at']}\n"
         f"Чатів: {user['chats_count']}\n"
         f"Рейтинг: {user['rating']}\n"
-        f"Інтерес: {user['interests'] or '—'}"
+        f"Інтереси: {interest_text}\n"
+        f"Статус: {premium_line}\n"
+        f"Premium до: {premium_until_text}"
     )
     await message.answer(
         text,

@@ -6,6 +6,7 @@ def main_menu_keyboard(show_end: bool = False, is_admin: bool = False) -> ReplyK
         [KeyboardButton(text="🔍 Пошук співрозмовника")],
         [KeyboardButton(text="🎯 Інтереси")],
         [KeyboardButton(text="🧑‍💻 Мій профіль")],
+        [KeyboardButton(text="⭐ Premium")],
         [KeyboardButton(text="❓ Правила")],
         [KeyboardButton(text="⚙️ Налаштування")],
         [KeyboardButton(text="🚨 Поскаржитись")],

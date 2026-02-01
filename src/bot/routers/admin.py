@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -12,7 +14,8 @@ from ..keyboards.admin_menu import (
     admin_menu_keyboard,
 )
 from ..utils.chat import end_chat, safe_send_message
-from ..utils.constants import STATE_IDLE
+from ..utils.constants import PREMIUM_INFO_TEXT, STATE_IDLE
+from ..utils.premium import is_premium_until
 
 router = Router()
 
@@ -89,6 +92,69 @@ async def admin_panel(message: Message, db: Database, config: Config) -> None:
 
     data = await db.stats()
     await message.answer(_stats_text(data), reply_markup=admin_menu_keyboard())
+
+
+@router.message(Command("premium"))
+async def premium_command(message: Message, db: Database, config: Config) -> None:
+    parts = (message.text or "").split()
+    if len(parts) == 1:
+        await message.answer(PREMIUM_INFO_TEXT)
+        return
+
+    if not _is_admin(message.from_user.id, config):
+        await message.answer("Недостатньо прав.")
+        return
+
+    if len(parts) < 3:
+        await message.answer("Використання: /premium <user_id> <days>")
+        return
+
+    try:
+        target_id = int(parts[1])
+        days = int(parts[2])
+    except ValueError:
+        await message.answer("Невірний формат. Використання: /premium <user_id> <days>")
+        return
+
+    if days <= 0:
+        await message.answer("Кількість днів має бути більшою за 0.")
+        return
+
+    current_until = await db.get_premium_until(target_id)
+    now = datetime.now(timezone.utc)
+    if is_premium_until(current_until):
+        base = datetime.fromisoformat(current_until)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+    else:
+        base = now
+
+    new_until = base + timedelta(days=days)
+    await db.set_premium_until(target_id, new_until.isoformat())
+    await message.answer(
+        f"Premium активовано для {target_id} до {new_until.strftime('%Y-%m-%d %H:%M UTC')}."
+    )
+
+
+@router.message(Command("premium_clear"))
+async def premium_clear(message: Message, db: Database, config: Config) -> None:
+    if not _is_admin(message.from_user.id, config):
+        await message.answer("Недостатньо прав.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Використання: /premium_clear <user_id>")
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("Невірний формат user_id.")
+        return
+
+    await db.set_premium_until(target_id, "")
+    await message.answer(f"Premium для {target_id} вимкнено.")
 
 
 @router.message(F.text == "🧰 Адмін-панель")

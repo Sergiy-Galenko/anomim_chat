@@ -38,6 +38,14 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE users ADD COLUMN interests TEXT NOT NULL DEFAULT ''"
             )
+        if "only_interest" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN only_interest INTEGER NOT NULL DEFAULT 0"
+            )
+        if "premium_until" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN premium_until TEXT NOT NULL DEFAULT ''"
+            )
 
     async def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Optional[aiosqlite.Row]:
         assert self._conn is not None
@@ -87,6 +95,9 @@ class Database:
         )
         return int(row["user_id"]) if row else None
 
+    async def get_queue_candidates(self, exclude_user_id: int) -> list[aiosqlite.Row]:
+        return await self.fetchall(queries.SELECT_QUEUE_CANDIDATES, (exclude_user_id,))
+
     async def create_pair(self, user1_id: int, user2_id: int) -> int:
         assert self._conn is not None
         cursor = await self._conn.execute(queries.INSERT_PAIR, (user1_id, user2_id, self._now()))
@@ -124,3 +135,17 @@ class Database:
 
     async def set_interests(self, user_id: int, interests: str) -> None:
         await self.execute(queries.UPDATE_INTERESTS, (interests, user_id))
+
+    async def get_only_interest(self, user_id: int) -> bool:
+        row = await self.fetchone(queries.SELECT_ONLY_INTEREST, (user_id,))
+        return bool(row["only_interest"]) if row else False
+
+    async def set_only_interest(self, user_id: int, value: bool) -> None:
+        await self.execute(queries.UPDATE_ONLY_INTEREST, (1 if value else 0, user_id))
+
+    async def get_premium_until(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_PREMIUM_UNTIL, (user_id,))
+        return row["premium_until"] if row else ""
+
+    async def set_premium_until(self, user_id: int, premium_until: str) -> None:
+        await self.execute(queries.UPDATE_PREMIUM_UNTIL, (premium_until, user_id))

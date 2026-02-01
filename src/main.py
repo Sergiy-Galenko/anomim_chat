@@ -13,7 +13,7 @@ if __name__ == "__main__" and __package__ in (None, ""):
 
 from .config import load_config
 from .db.database import Database
-from .bot.routers import admin, chat, interests, match, profile, reports, start
+from .bot.routers import admin, chat, interests, match, premium, profile, reports, start
 
 
 async def main() -> None:
@@ -37,6 +37,7 @@ async def main() -> None:
     dp.include_router(admin.router)
     dp.include_router(start.router)
     dp.include_router(profile.router)
+    dp.include_router(premium.router)
     dp.include_router(interests.router)
     dp.include_router(match.router)
     dp.include_router(reports.router)
