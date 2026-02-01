@@ -13,7 +13,16 @@ from ..utils.users import ensure_user, get_state, is_banned
 router = Router()
 
 
-@router.message(F.text.in_({"🔍 Знайти співрозмовника", "🔍 Знайти нового"}))
+@router.message(
+    F.text.in_(
+        {
+            "🔍 Знайти співрозмовника",
+            "🔍 Пошук співрозмовника",
+            "🔍 Знайти нового",
+            "🔄 Знайти нового",
+        }
+    )
+)
 async def find_partner(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
@@ -84,7 +93,7 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
         )
 
 
-@router.message(F.text == "❌ Скасувати пошук")
+@router.message(F.text.in_({"❌ Скасувати пошук", "🚫 Скасувати пошук"}))
 async def cancel_search(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)

@@ -19,3 +19,12 @@ def admin_cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="❌ Скасувати", callback_data="admin:cancel")]]
     )
+
+
+def admin_confirm_keyboard(action: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"admin:confirm_{action}")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin:cancel")],
+        ]
+    )

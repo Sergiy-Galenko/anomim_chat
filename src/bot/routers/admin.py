@@ -6,7 +6,11 @@ from aiogram.types import CallbackQuery, Message
 
 from ...config import Config
 from ...db.database import Database
-from ..keyboards.admin_menu import admin_cancel_keyboard, admin_menu_keyboard
+from ..keyboards.admin_menu import (
+    admin_cancel_keyboard,
+    admin_confirm_keyboard,
+    admin_menu_keyboard,
+)
 from ..utils.chat import end_chat, safe_send_message
 from ..utils.constants import STATE_IDLE
 
@@ -14,7 +18,9 @@ router = Router()
 
 class AdminStates(StatesGroup):
     waiting_ban_id = State()
+    confirm_ban = State()
     waiting_unban_id = State()
+    confirm_unban = State()
 
 
 def _is_admin(user_id: int, config: Config) -> bool:
@@ -37,11 +43,15 @@ def _parse_target_id(text: str) -> int | None:
 
 def _stats_text(data: dict[str, int]) -> str:
     return (
+        "🧰 Адмін-панель\n"
+        "----------------\n"
         "📊 Статистика\n"
-        f"Користувачі: {data['users']}\n"
-        f"Активні чати: {data['active_chats']}\n"
-        f"В черзі: {data['queue']}\n"
-        f"Скарги: {data['reports']}"
+        f"- Користувачі: {data['users']}\n"
+        f"- Активні чати: {data['active_chats']}\n"
+        f"- В черзі: {data['queue']}\n"
+        f"- Скарги: {data['reports']}\n"
+        "\n"
+        "Дії доступні кнопками нижче."
     )
 
 
@@ -81,6 +91,11 @@ async def admin_panel(message: Message, db: Database, config: Config) -> None:
     await message.answer(_stats_text(data), reply_markup=admin_menu_keyboard())
 
 
+@router.message(F.text == "🧰 Адмін-панель")
+async def admin_panel_button(message: Message, db: Database, config: Config) -> None:
+    await admin_panel(message, db, config)
+
+
 @router.callback_query(F.data == "admin:close")
 async def admin_close(callback: CallbackQuery, config: Config) -> None:
     if not _is_admin(callback.from_user.id, config):
@@ -113,7 +128,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
 
     if total == 0:
         await callback.message.edit_text(
-            "👥 Активні користувачі: 0",
+            "👥 Активні користувачі: 0\n----------------\nНемає активних сесій.",
             reply_markup=admin_menu_keyboard(),
         )
         await callback.answer()
@@ -133,7 +148,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
 
     # Update panel with summary and send the list in separate messages if needed.
     await callback.message.edit_text(
-        f"{header}\n\nСписок надіслано окремо.",
+        f"{header}\n----------------\nСписок надіслано нижче.",
         reply_markup=admin_menu_keyboard(),
     )
 
@@ -187,21 +202,49 @@ async def admin_ban_input(message: Message, db: Database, state: FSMContext, con
         await message.answer("Введіть коректний user_id.")
         return
 
-    await db.set_banned(target_id, True)
-    await db.remove_from_queue(target_id)
-    await db.set_state(target_id, STATE_IDLE)
+    await state.update_data(target_id=target_id)
+    await state.set_state(AdminStates.confirm_ban)
+    await message.answer(
+        f"Підтвердити бан користувача {target_id}?",
+        reply_markup=admin_confirm_keyboard("ban"),
+    )
+
+
+@router.callback_query(F.data == "admin:confirm_ban", AdminStates.confirm_ban)
+async def admin_confirm_ban(
+    callback: CallbackQuery, db: Database, state: FSMContext, config: Config
+) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    target_id = data.get("target_id")
+    if not target_id:
+        await state.clear()
+        await callback.message.answer("Не вдалося отримати user_id.", reply_markup=admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    await db.set_banned(int(target_id), True)
+    await db.remove_from_queue(int(target_id))
+    await db.set_state(int(target_id), STATE_IDLE)
 
     await end_chat(
         db,
-        message.bot,
-        target_id,
+        callback.bot,
+        int(target_id),
         notify_user=False,
         reason_text="❌ Діалог завершено.",
     )
-    await safe_send_message(message.bot, target_id, "Ваш акаунт заблоковано.")
+    await safe_send_message(callback.bot, int(target_id), "Ваш акаунт заблоковано.")
 
     await state.clear()
-    await message.answer(f"Користувача {target_id} заблоковано.", reply_markup=admin_menu_keyboard())
+    await callback.message.edit_text(
+        f"Готово. Користувача {target_id} заблоковано.",
+        reply_markup=admin_menu_keyboard(),
+    )
+    await callback.answer()
 
 
 @router.message(AdminStates.waiting_unban_id)
@@ -217,10 +260,39 @@ async def admin_unban_input(
         await message.answer("Введіть коректний user_id.")
         return
 
-    await db.set_banned(target_id, False)
-    await db.set_state(target_id, STATE_IDLE)
+    await state.update_data(target_id=target_id)
+    await state.set_state(AdminStates.confirm_unban)
+    await message.answer(
+        f"Підтвердити розбан користувача {target_id}?",
+        reply_markup=admin_confirm_keyboard("unban"),
+    )
+
+
+@router.callback_query(F.data == "admin:confirm_unban", AdminStates.confirm_unban)
+async def admin_confirm_unban(
+    callback: CallbackQuery, db: Database, state: FSMContext, config: Config
+) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    target_id = data.get("target_id")
+    if not target_id:
+        await state.clear()
+        await callback.message.answer("Не вдалося отримати user_id.", reply_markup=admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    await db.set_banned(int(target_id), False)
+    await db.set_state(int(target_id), STATE_IDLE)
+
     await state.clear()
-    await message.answer(f"Користувача {target_id} розблоковано.", reply_markup=admin_menu_keyboard())
+    await callback.message.edit_text(
+        f"Готово. Користувача {target_id} розблоковано.",
+        reply_markup=admin_menu_keyboard(),
+    )
+    await callback.answer()
 
 
 @router.message(Command("ban"))
