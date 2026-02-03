@@ -12,3 +12,5 @@ class User:
     interests: str
     only_interest: int
     premium_until: str
+    trial_used: int
+    skip_until: str

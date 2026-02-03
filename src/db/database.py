@@ -20,6 +20,7 @@ class Database:
         await self._conn.execute("PRAGMA foreign_keys = ON")
         await self._conn.executescript(queries.CREATE_TABLES)
         await self._ensure_columns()
+        await self._ensure_report_columns()
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -46,6 +47,28 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE users ADD COLUMN premium_until TEXT NOT NULL DEFAULT ''"
             )
+        if "trial_used" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN trial_used INTEGER NOT NULL DEFAULT 0"
+            )
+        if "skip_until" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN skip_until TEXT NOT NULL DEFAULT ''"
+            )
+
+    async def _ensure_report_columns(self) -> None:
+        assert self._conn is not None
+        async with self._conn.execute("PRAGMA table_info(reports)") as cursor:
+            rows = await cursor.fetchall()
+        columns = {row["name"] for row in rows}
+        if "status" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'new'"
+            )
+        if "resolved_at" not in columns:
+            await self._conn.execute("ALTER TABLE reports ADD COLUMN resolved_at TEXT")
+        if "resolved_by" not in columns:
+            await self._conn.execute("ALTER TABLE reports ADD COLUMN resolved_by INTEGER")
 
     async def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Optional[aiosqlite.Row]:
         assert self._conn is not None
@@ -113,16 +136,44 @@ class Database:
     async def add_report(self, reporter_id: int, reported_id: int, reason: str) -> None:
         await self.execute(queries.INSERT_REPORT, (reporter_id, reported_id, reason, self._now()))
 
+    async def get_next_report(self) -> Optional[aiosqlite.Row]:
+        return await self.fetchone(queries.SELECT_NEXT_REPORT)
+
+    async def get_report_by_id(self, report_id: int) -> Optional[aiosqlite.Row]:
+        return await self.fetchone(queries.SELECT_REPORT_BY_ID, (report_id,))
+
+    async def resolve_report(self, report_id: int, status: str, admin_id: int) -> None:
+        await self.execute(
+            queries.UPDATE_REPORT_STATUS, (status, self._now(), admin_id, report_id)
+        )
+
+    async def add_incident(
+        self, actor_id: int | None, target_id: int | None, incident_type: str, payload: str
+    ) -> None:
+        await self.execute(
+            queries.INSERT_INCIDENT,
+            (actor_id, target_id, incident_type, payload, self._now()),
+        )
+
+    async def add_promo_use(self, user_id: int, code: str) -> None:
+        await self.execute(queries.INSERT_PROMO_USE, (user_id, code, self._now()))
+
+    async def has_used_promo(self, user_id: int, code: str) -> bool:
+        row = await self.fetchone(queries.SELECT_PROMO_USE, (user_id, code))
+        return row is not None
+
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)
         active_chats = await self.fetchone(queries.STATS_ACTIVE_CHATS)
         queue = await self.fetchone(queries.STATS_QUEUE)
         reports = await self.fetchone(queries.STATS_REPORTS)
+        banned = await self.fetchone(queries.STATS_BANNED)
         return {
             "users": int(users["count"]) if users else 0,
             "active_chats": int(active_chats["count"]) if active_chats else 0,
             "queue": int(queue["count"]) if queue else 0,
             "reports": int(reports["count"]) if reports else 0,
+            "banned": int(banned["count"]) if banned else 0,
         }
 
     async def get_active_user_ids(self) -> list[int]:
@@ -149,3 +200,21 @@ class Database:
 
     async def set_premium_until(self, user_id: int, premium_until: str) -> None:
         await self.execute(queries.UPDATE_PREMIUM_UNTIL, (premium_until, user_id))
+
+    async def get_trial_used(self, user_id: int) -> bool:
+        row = await self.fetchone(queries.SELECT_TRIAL_USED, (user_id,))
+        return bool(row["trial_used"]) if row else False
+
+    async def set_trial_used(self, user_id: int, value: bool) -> None:
+        await self.execute(queries.UPDATE_TRIAL_USED, (1 if value else 0, user_id))
+
+    async def get_skip_until(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_SKIP_UNTIL, (user_id,))
+        return row["skip_until"] if row else ""
+
+    async def set_skip_until(self, user_id: int, skip_until: str) -> None:
+        await self.execute(queries.UPDATE_SKIP_UNTIL, (skip_until, user_id))
+
+    async def get_all_premium_until(self) -> list[str]:
+        rows = await self.fetchall(queries.SELECT_ALL_PREMIUM_UNTIL)
+        return [row["premium_until"] for row in rows]

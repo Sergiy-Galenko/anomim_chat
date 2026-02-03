@@ -12,6 +12,7 @@ def main_menu_keyboard(show_end: bool = False, is_admin: bool = False) -> ReplyK
         [KeyboardButton(text="🚨 Поскаржитись")],
     ]
     if show_end:
+        keyboard.append([KeyboardButton(text="⏭ Скіп")])
         keyboard.append([KeyboardButton(text="🛑 Завершити діалог")])
         if is_admin:
             keyboard.append([KeyboardButton(text="🧷 Адмін: інфо партнера")])

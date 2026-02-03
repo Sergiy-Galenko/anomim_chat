@@ -55,6 +55,7 @@ async def handle_report_reason(
         return
 
     await db.add_report(user_id, partner_id, reason)
+    await db.add_incident(user_id, partner_id, "report", reason)
 
     if config.admin_ids:
         created_at = datetime.now(timezone.utc).isoformat()

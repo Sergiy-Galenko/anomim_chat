@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
     chats_count INTEGER NOT NULL DEFAULT 0,
     interests TEXT NOT NULL DEFAULT '',
     only_interest INTEGER NOT NULL DEFAULT 0,
-    premium_until TEXT NOT NULL DEFAULT ''
+    premium_until TEXT NOT NULL DEFAULT '',
+    trial_used INTEGER NOT NULL DEFAULT 0,
+    skip_until TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS pairs (
@@ -30,7 +32,27 @@ CREATE TABLE IF NOT EXISTS reports (
     reporter_id INTEGER NOT NULL,
     reported_id INTEGER NOT NULL,
     reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
+    resolved_at TEXT,
+    resolved_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER,
+    target_id INTEGER,
+    type TEXT NOT NULL,
+    payload TEXT,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS promo_uses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    UNIQUE(user_id, code)
 );
 """
 
@@ -46,6 +68,8 @@ INCREMENT_CHATS = "UPDATE users SET chats_count = chats_count + 1 WHERE user_id 
 UPDATE_INTERESTS = "UPDATE users SET interests = ? WHERE user_id = ?"
 UPDATE_ONLY_INTEREST = "UPDATE users SET only_interest = ? WHERE user_id = ?"
 UPDATE_PREMIUM_UNTIL = "UPDATE users SET premium_until = ? WHERE user_id = ?"
+UPDATE_TRIAL_USED = "UPDATE users SET trial_used = ? WHERE user_id = ?"
+UPDATE_SKIP_UNTIL = "UPDATE users SET skip_until = ? WHERE user_id = ?"
 
 INSERT_QUEUE = "INSERT OR REPLACE INTO queue (user_id, joined_at) VALUES (?, ?)"
 DELETE_QUEUE = "DELETE FROM queue WHERE user_id = ?"
@@ -72,7 +96,7 @@ LIMIT 1
 """
 
 SELECT_QUEUE_CANDIDATES = """
-SELECT q.user_id, u.interests, u.only_interest
+SELECT q.user_id, u.interests, u.only_interest, u.premium_until
 FROM queue q
 JOIN users u ON u.user_id = q.user_id
 WHERE q.user_id != ? AND u.state = 'searching' AND u.is_banned = 0
@@ -98,10 +122,40 @@ INSERT INTO reports (reporter_id, reported_id, reason, created_at)
 VALUES (?, ?, ?, ?)
 """
 
+SELECT_NEXT_REPORT = """
+SELECT * FROM reports
+WHERE status = 'new'
+ORDER BY created_at ASC
+LIMIT 1
+"""
+
+SELECT_REPORT_BY_ID = "SELECT * FROM reports WHERE id = ?"
+
+UPDATE_REPORT_STATUS = """
+UPDATE reports
+SET status = ?, resolved_at = ?, resolved_by = ?
+WHERE id = ?
+"""
+
+INSERT_INCIDENT = """
+INSERT INTO incidents (actor_id, target_id, type, payload, created_at)
+VALUES (?, ?, ?, ?, ?)
+"""
+
+INSERT_PROMO_USE = """
+INSERT INTO promo_uses (user_id, code, used_at)
+VALUES (?, ?, ?)
+"""
+
+SELECT_PROMO_USE = """
+SELECT id FROM promo_uses WHERE user_id = ? AND code = ?
+"""
+
 STATS_USERS = "SELECT COUNT(*) AS count FROM users"
 STATS_ACTIVE_CHATS = "SELECT COUNT(*) AS count FROM pairs WHERE is_active = 1"
 STATS_QUEUE = "SELECT COUNT(*) AS count FROM queue"
 STATS_REPORTS = "SELECT COUNT(*) AS count FROM reports"
+STATS_BANNED = "SELECT COUNT(*) AS count FROM users WHERE is_banned = 1"
 
 SELECT_ACTIVE_USERS = """
 SELECT user_id
@@ -113,3 +167,6 @@ ORDER BY user_id ASC
 SELECT_INTERESTS = "SELECT interests FROM users WHERE user_id = ?"
 SELECT_ONLY_INTEREST = "SELECT only_interest FROM users WHERE user_id = ?"
 SELECT_PREMIUM_UNTIL = "SELECT premium_until FROM users WHERE user_id = ?"
+SELECT_TRIAL_USED = "SELECT trial_used FROM users WHERE user_id = ?"
+SELECT_SKIP_UNTIL = "SELECT skip_until FROM users WHERE user_id = ?"
+SELECT_ALL_PREMIUM_UNTIL = "SELECT premium_until FROM users"

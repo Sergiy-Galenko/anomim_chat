@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta, timezone
+import csv
+import io
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from ...config import Config
 from ...db.database import Database
@@ -12,10 +13,11 @@ from ..keyboards.admin_menu import (
     admin_cancel_keyboard,
     admin_confirm_keyboard,
     admin_menu_keyboard,
+    report_action_keyboard,
 )
 from ..utils.chat import end_chat, safe_send_message
 from ..utils.constants import PREMIUM_INFO_TEXT, STATE_IDLE
-from ..utils.premium import is_premium_until
+from ..utils.premium import add_premium_days, is_premium_until
 
 router = Router()
 
@@ -53,6 +55,7 @@ def _stats_text(data: dict[str, int]) -> str:
         f"- Активні чати: {data['active_chats']}\n"
         f"- В черзі: {data['queue']}\n"
         f"- Скарги: {data['reports']}\n"
+        f"- Заблоковані: {data['banned']}\n"
         "\n"
         "Дії доступні кнопками нижче."
     )
@@ -121,19 +124,12 @@ async def premium_command(message: Message, db: Database, config: Config) -> Non
         return
 
     current_until = await db.get_premium_until(target_id)
-    now = datetime.now(timezone.utc)
-    if is_premium_until(current_until):
-        base = datetime.fromisoformat(current_until)
-        if base.tzinfo is None:
-            base = base.replace(tzinfo=timezone.utc)
-    else:
-        base = now
-
-    new_until = base + timedelta(days=days)
-    await db.set_premium_until(target_id, new_until.isoformat())
+    new_until = add_premium_days(current_until, days)
+    await db.set_premium_until(target_id, new_until)
     await message.answer(
-        f"Premium активовано для {target_id} до {new_until.strftime('%Y-%m-%d %H:%M UTC')}."
+        f"Premium активовано для {target_id} до {new_until}."
     )
+    await db.add_incident(message.from_user.id, target_id, "premium_grant", f"{days}d")
 
 
 @router.message(Command("premium_clear"))
@@ -155,6 +151,7 @@ async def premium_clear(message: Message, db: Database, config: Config) -> None:
 
     await db.set_premium_until(target_id, "")
     await message.answer(f"Premium для {target_id} вимкнено.")
+    await db.add_incident(message.from_user.id, target_id, "premium_clear", "")
 
 
 @router.message(F.text == "🧰 Адмін-панель")
@@ -180,6 +177,131 @@ async def admin_stats(callback: CallbackQuery, db: Database, config: Config) -> 
 
     data = await db.stats()
     await callback.message.edit_text(_stats_text(data), reply_markup=admin_menu_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:export_stats")
+async def admin_export_stats(callback: CallbackQuery, db: Database, config: Config) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    data = await db.stats()
+    premium_until_list = await db.get_all_premium_until()
+    premium_active = sum(1 for value in premium_until_list if is_premium_until(value))
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["metric", "value"])
+    writer.writerow(["users", data["users"]])
+    writer.writerow(["active_chats", data["active_chats"]])
+    writer.writerow(["queue", data["queue"]])
+    writer.writerow(["reports", data["reports"]])
+    writer.writerow(["banned", data["banned"]])
+    writer.writerow(["premium_active", premium_active])
+
+    content = buffer.getvalue().encode("utf-8")
+    file = BufferedInputFile(content, filename="stats.csv")
+    await callback.message.answer_document(file)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:reports")
+async def admin_reports(callback: CallbackQuery, db: Database, config: Config) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    report = await db.get_next_report()
+    if not report:
+        await callback.message.edit_text(
+            "🧾 Скарги\n----------------\nНових скарг немає.",
+            reply_markup=admin_menu_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    text = (
+        "🧾 Скарга\n"
+        "----------------\n"
+        f"ID: {report['id']}\n"
+        f"Від: {report['reporter_id']}\n"
+        f"На: {report['reported_id']}\n"
+        f"Причина: {report['reason']}\n"
+        f"Дата: {report['created_at']}"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=report_action_keyboard(int(report["id"]))
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:report_ban:"))
+async def admin_report_ban(callback: CallbackQuery, db: Database, config: Config) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    try:
+        report_id = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Невірний ID.", show_alert=True)
+        return
+
+    report = await db.get_report_by_id(report_id)
+    if not report:
+        await callback.message.edit_text("Скаргу не знайдено.", reply_markup=admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    target_id = int(report["reported_id"])
+    await db.set_banned(target_id, True)
+    await db.remove_from_queue(target_id)
+    await db.set_state(target_id, STATE_IDLE)
+    await end_chat(
+        db,
+        callback.bot,
+        target_id,
+        notify_user=False,
+        reason_text="❌ Діалог завершено.",
+    )
+    await safe_send_message(callback.bot, target_id, "Ваш акаунт заблоковано.")
+
+    await db.resolve_report(report_id, "banned", callback.from_user.id)
+    await db.add_incident(callback.from_user.id, target_id, "report_ban", str(report_id))
+
+    await callback.message.edit_text(
+        f"Готово. Користувача {target_id} заблоковано.",
+        reply_markup=admin_menu_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:report_ignore:"))
+async def admin_report_ignore(callback: CallbackQuery, db: Database, config: Config) -> None:
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+
+    try:
+        report_id = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Невірний ID.", show_alert=True)
+        return
+
+    report = await db.get_report_by_id(report_id)
+    if not report:
+        await callback.message.edit_text("Скаргу не знайдено.", reply_markup=admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    await db.resolve_report(report_id, "ignored", callback.from_user.id)
+    await db.add_incident(callback.from_user.id, int(report["reported_id"]), "report_ignore", str(report_id))
+
+    await callback.message.edit_text(
+        f"Скаргу {report_id} проігноровано.",
+        reply_markup=admin_menu_keyboard(),
+    )
     await callback.answer()
 
 
@@ -387,6 +509,7 @@ async def ban_user(message: Message, db: Database, config: Config) -> None:
     await safe_send_message(message.bot, target_id, "Ваш акаунт заблоковано.")
 
     await message.answer(f"Користувача {target_id} заблоковано.")
+    await db.add_incident(message.from_user.id, target_id, "ban", "")
 
 
 @router.message(Command("unban"))
@@ -403,6 +526,7 @@ async def unban_user(message: Message, db: Database, config: Config) -> None:
     await db.set_banned(target_id, False)
     await db.set_state(target_id, STATE_IDLE)
     await message.answer(f"Користувача {target_id} розблоковано.")
+    await db.add_incident(message.from_user.id, target_id, "unban", "")
 
 
 @router.message(Command("stats"))
@@ -412,11 +536,40 @@ async def stats(message: Message, db: Database, config: Config) -> None:
         return
 
     data = await db.stats()
+    premium_until_list = await db.get_all_premium_until()
+    premium_active = sum(1 for value in premium_until_list if is_premium_until(value))
     text = (
         "📊 Статистика\n"
         f"Користувачі: {data['users']}\n"
         f"Активні чати: {data['active_chats']}\n"
         f"В черзі: {data['queue']}\n"
-        f"Скарги: {data['reports']}"
+        f"Скарги: {data['reports']}\n"
+        f"Заблоковані: {data['banned']}\n"
+        f"Premium активні: {premium_active}"
     )
     await message.answer(text)
+
+
+@router.message(Command("export_stats"))
+async def export_stats(message: Message, db: Database, config: Config) -> None:
+    if not _is_admin(message.from_user.id, config):
+        await message.answer("Недостатньо прав.")
+        return
+
+    data = await db.stats()
+    premium_until_list = await db.get_all_premium_until()
+    premium_active = sum(1 for value in premium_until_list if is_premium_until(value))
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["metric", "value"])
+    writer.writerow(["users", data["users"]])
+    writer.writerow(["active_chats", data["active_chats"]])
+    writer.writerow(["queue", data["queue"]])
+    writer.writerow(["reports", data["reports"]])
+    writer.writerow(["banned", data["banned"]])
+    writer.writerow(["premium_active", premium_active])
+
+    content = buffer.getvalue().encode("utf-8")
+    file = BufferedInputFile(content, filename="stats.csv")
+    await message.answer_document(file)

@@ -7,6 +7,8 @@ RULES_TEXT = (
     "18+ заборонено, скарги модеруються."
 )
 
+SKIP_COOLDOWN_SECONDS = 30
+
 PREMIUM_INFO_TEXT = (
     "⭐ Premium\n"
     "Переваги:\n"
@@ -18,5 +20,7 @@ PREMIUM_INFO_TEXT = (
     "- 29 Stars / 7 днів\n"
     "- 249 Stars / 90 днів\n"
     "\n"
-    "Оплата через Telegram Stars буде додана пізніше."
+    "Додатково:\n"
+    "- пробний період (1 раз)\n"
+    "- промокоди\n"
 )

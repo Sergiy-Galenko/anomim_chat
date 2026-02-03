@@ -9,6 +9,7 @@ from ..utils.chat import end_chat, safe_send_message
 from ..utils.constants import STATE_CHATTING, STATE_IDLE, STATE_SEARCHING
 from ..utils.admin import is_admin
 from ..utils.interests import parse_interests
+from ..utils.premium import is_premium_until
 from ..utils.users import ensure_user, get_state, is_banned
 
 router = Router()
@@ -48,21 +49,27 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
     await db.add_to_queue(user_id)
     await message.answer("⏳ Шукаємо...", reply_markup=searching_keyboard())
 
+    await _attempt_match(message, db, config, user_id)
+
+
+async def _attempt_match(message: Message, db: Database, config: Config, user_id: int) -> bool:
     # Try to match with another waiting user based on interests.
     async with db.lock:
         # Ensure the user is still searching before matching.
         current_state = await get_state(db, user_id)
         if current_state != STATE_SEARCHING:
-            return
+            return False
 
         raw_interests = (await db.get_interests(user_id)).strip()
         user_interests = set(parse_interests(raw_interests))
-        user_only_interest = await db.get_only_interest(user_id)
+        premium_until = await db.get_premium_until(user_id)
+        user_is_premium = is_premium_until(premium_until)
+        user_only_interest = await db.get_only_interest(user_id) and user_is_premium
 
         candidates = await db.get_queue_candidates(user_id)
         candidate_id = _pick_candidate(user_interests, user_only_interest, candidates)
         if not candidate_id:
-            return
+            return False
 
         await db.remove_from_queue(user_id)
         await db.remove_from_queue(candidate_id)
@@ -96,29 +103,66 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
             user_id if sent_user else candidate_id,
             reason_text="Партнер недоступний. Спробуйте ще раз.",
         )
+        return False
+
+    return True
 
 
-def _pick_candidate(user_interests: set[str], user_only: bool, candidates) -> int | None:
+def _pick_candidate(
+    user_interests: set[str],
+    user_only: bool,
+    candidates,
+) -> int | None:
+    if user_only and not user_interests:
+        return None
     # First pass: prefer users with intersecting interests.
+    matched_premium: list[int] = []
+    matched_regular: list[int] = []
     for row in candidates:
         cand_interests = set(parse_interests(row["interests"] or ""))
-        cand_only = bool(row["only_interest"])
+        cand_premium = is_premium_until(row["premium_until"] or "")
+        cand_only = bool(row["only_interest"]) and cand_premium
         if _has_intersection(user_interests, cand_interests):
-            return int(row["user_id"])
+            if cand_premium:
+                matched_premium.append(int(row["user_id"]))
+            else:
+                matched_regular.append(int(row["user_id"]))
+        elif cand_only:
+            # Candidate requires interest match; skip in fallback.
+            continue
 
-    # Fallback: only if not strict.
+    if matched_premium:
+        return matched_premium[0]
+    if matched_regular:
+        return matched_regular[0]
+
+    # Fallback: only if not strict and user doesn't require interest.
     if user_only:
         return None
 
+    fallback_premium: list[int] = []
+    fallback_regular: list[int] = []
     for row in candidates:
-        cand_interests = set(parse_interests(row["interests"] or ""))
-        cand_only = bool(row["only_interest"])
+        cand_premium = is_premium_until(row["premium_until"] or "")
+        cand_only = bool(row["only_interest"]) and cand_premium
         if cand_only:
             continue
         if not user_interests:
-            return int(row["user_id"])
-        # User has interests but allows broad search.
-        return int(row["user_id"])
+            if cand_premium:
+                fallback_premium.append(int(row["user_id"]))
+            else:
+                fallback_regular.append(int(row["user_id"]))
+        else:
+            # User has interests but allows broad search.
+            if cand_premium:
+                fallback_premium.append(int(row["user_id"]))
+            else:
+                fallback_regular.append(int(row["user_id"]))
+
+    if fallback_premium:
+        return fallback_premium[0]
+    if fallback_regular:
+        return fallback_regular[0]
 
     return None
 
