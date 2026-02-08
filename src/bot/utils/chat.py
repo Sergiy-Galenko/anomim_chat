@@ -5,8 +5,9 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from ...db.database import Database
 from .constants import STATE_IDLE
-from ..keyboards.main_menu import main_menu_keyboard
 from ..keyboards.match_menu import find_new_keyboard
+from ..keyboards.rating_menu import rating_keyboard
+from .i18n import tr
 
 
 async def get_partner(db: Database, user_id: int) -> Tuple[Optional[int], Optional[int]]:
@@ -31,7 +32,9 @@ async def end_chat(
     user_id: int,
     notify_partner: bool = True,
     notify_user: bool = True,
-    reason_text: str = "❌ Діалог завершено.",
+    collect_feedback: bool = True,
+    reason_ru: str = "❌ Диалог завершен.",
+    reason_en: str = "❌ Chat ended.",
 ) -> Optional[int]:
     partner_id, pair_id = await get_partner(db, user_id)
     if not pair_id or not partner_id:
@@ -41,9 +44,44 @@ async def end_chat(
     await db.set_state(user_id, STATE_IDLE)
     await db.set_state(partner_id, STATE_IDLE)
 
+    await db.clear_pending_rating(user_id)
+    await db.clear_pending_rating(partner_id)
+
+    if collect_feedback:
+        if notify_user:
+            await db.set_pending_rating(user_id, pair_id, partner_id)
+        if notify_partner:
+            await db.set_pending_rating(partner_id, pair_id, user_id)
+
     if notify_user:
-        await safe_send_message(bot, user_id, reason_text, reply_markup=find_new_keyboard())
+        user_lang = await db.get_lang(user_id)
+        await safe_send_message(
+            bot,
+            user_id,
+            tr(user_lang, reason_ru, reason_en),
+            reply_markup=find_new_keyboard(user_lang),
+        )
+        if collect_feedback:
+            await safe_send_message(
+                bot,
+                user_id,
+                tr(user_lang, "Оцените собеседника:", "Rate your partner:"),
+                reply_markup=rating_keyboard(),
+            )
     if notify_partner:
-        await safe_send_message(bot, partner_id, reason_text, reply_markup=find_new_keyboard())
+        partner_lang = await db.get_lang(partner_id)
+        await safe_send_message(
+            bot,
+            partner_id,
+            tr(partner_lang, reason_ru, reason_en),
+            reply_markup=find_new_keyboard(partner_lang),
+        )
+        if collect_feedback:
+            await safe_send_message(
+                bot,
+                partner_id,
+                tr(partner_lang, "Оцените собеседника:", "Rate your partner:"),
+                reply_markup=rating_keyboard(),
+            )
 
     return partner_id

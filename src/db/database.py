@@ -35,6 +35,14 @@ class Database:
         async with self._conn.execute("PRAGMA table_info(users)") as cursor:
             rows = await cursor.fetchall()
         columns = {row["name"] for row in rows}
+        if "banned_until" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN banned_until TEXT NOT NULL DEFAULT ''"
+            )
+        if "muted_until" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN muted_until TEXT NOT NULL DEFAULT ''"
+            )
         if "interests" not in columns:
             await self._conn.execute(
                 "ALTER TABLE users ADD COLUMN interests TEXT NOT NULL DEFAULT ''"
@@ -54,6 +62,18 @@ class Database:
         if "skip_until" not in columns:
             await self._conn.execute(
                 "ALTER TABLE users ADD COLUMN skip_until TEXT NOT NULL DEFAULT ''"
+            )
+        if "auto_search" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN auto_search INTEGER NOT NULL DEFAULT 0"
+            )
+        if "content_filter" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN content_filter INTEGER NOT NULL DEFAULT 1"
+            )
+        if "lang" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'ru'"
             )
 
     async def _ensure_report_columns(self) -> None:
@@ -96,9 +116,28 @@ class Database:
 
     async def set_banned(self, user_id: int, is_banned: bool) -> None:
         await self.execute(queries.UPDATE_BANNED, (1 if is_banned else 0, user_id))
+        if is_banned:
+            await self.execute(queries.UPDATE_BANNED_UNTIL, ("", user_id))
+
+    async def set_banned_until(self, user_id: int, banned_until: str) -> None:
+        await self.execute(queries.UPDATE_BANNED_UNTIL, (banned_until, user_id))
+
+    async def get_banned_until(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_BANNED_UNTIL, (user_id,))
+        return row["banned_until"] if row else ""
+
+    async def set_muted_until(self, user_id: int, muted_until: str) -> None:
+        await self.execute(queries.UPDATE_MUTED_UNTIL, (muted_until, user_id))
+
+    async def get_muted_until(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_MUTED_UNTIL, (user_id,))
+        return row["muted_until"] if row else ""
 
     async def increment_chats(self, user_id: int) -> None:
         await self.execute(queries.INCREMENT_CHATS, (user_id,))
+
+    async def increment_rating(self, user_id: int, value: int) -> None:
+        await self.execute(queries.INCREMENT_RATING, (value, user_id))
 
     async def add_to_queue(self, user_id: int) -> None:
         await self.execute(queries.INSERT_QUEUE, (user_id, self._now()))
@@ -106,20 +145,35 @@ class Database:
     async def remove_from_queue(self, user_id: int) -> None:
         await self.execute(queries.DELETE_QUEUE, (user_id,))
 
+    async def get_queue_size(self) -> int:
+        row = await self.fetchone(queries.SELECT_QUEUE_SIZE)
+        return int(row["count"]) if row else 0
+
+    async def get_queue_joined_at(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_QUEUE_JOINED_AT, (user_id,))
+        return row["joined_at"] if row else ""
+
+    async def get_queue_position(self, user_id: int) -> int:
+        joined_at = await self.get_queue_joined_at(user_id)
+        if not joined_at:
+            return 0
+        row = await self.fetchone(queries.SELECT_QUEUE_POSITION, (user_id,))
+        return int(row["pos"]) if row else 0
+
     async def get_queue_candidate(self, exclude_user_id: int) -> Optional[int]:
-        row = await self.fetchone(queries.SELECT_QUEUE_CANDIDATE, (exclude_user_id,))
+        row = await self.fetchone(queries.SELECT_QUEUE_CANDIDATE, (exclude_user_id, self._now()))
         return int(row["user_id"]) if row else None
 
     async def get_queue_candidate_by_interest(
         self, exclude_user_id: int, interest: str
     ) -> Optional[int]:
         row = await self.fetchone(
-            queries.SELECT_QUEUE_CANDIDATE_INTEREST, (exclude_user_id, interest)
+            queries.SELECT_QUEUE_CANDIDATE_INTEREST, (exclude_user_id, self._now(), interest)
         )
         return int(row["user_id"]) if row else None
 
     async def get_queue_candidates(self, exclude_user_id: int) -> list[aiosqlite.Row]:
-        return await self.fetchall(queries.SELECT_QUEUE_CANDIDATES, (exclude_user_id,))
+        return await self.fetchall(queries.SELECT_QUEUE_CANDIDATES, (exclude_user_id, self._now()))
 
     async def create_pair(self, user1_id: int, user2_id: int) -> int:
         assert self._conn is not None
@@ -162,23 +216,88 @@ class Database:
         row = await self.fetchone(queries.SELECT_PROMO_USE, (user_id, code))
         return row is not None
 
+    async def set_pending_rating(self, user_id: int, pair_id: int, target_id: int) -> None:
+        await self.execute(
+            queries.INSERT_PENDING_RATING,
+            (user_id, pair_id, target_id, self._now()),
+        )
+
+    async def get_pending_rating(self, user_id: int) -> tuple[int, int] | None:
+        row = await self.fetchone(queries.SELECT_PENDING_RATING, (user_id,))
+        if not row:
+            return None
+        return int(row["pair_id"]), int(row["target_id"])
+
+    async def clear_pending_rating(self, user_id: int) -> None:
+        await self.execute(queries.DELETE_PENDING_RATING, (user_id,))
+
+    async def submit_rating(
+        self, rater_id: int, value: int, expected_target_id: int | None = None
+    ) -> tuple[bool, int | None]:
+        if value not in (-1, 1):
+            return False, None
+
+        async with self.lock:
+            assert self._conn is not None
+            pending = await self.fetchone(queries.SELECT_PENDING_RATING, (rater_id,))
+            if not pending:
+                return False, None
+
+            pair_id = int(pending["pair_id"])
+            target_id = int(pending["target_id"])
+            if expected_target_id is not None and target_id != expected_target_id:
+                return False, None
+
+            exists = await self.fetchone(queries.SELECT_CHAT_FEEDBACK_EXISTS, (pair_id, rater_id))
+            if exists:
+                await self.execute(queries.DELETE_PENDING_RATING, (rater_id,))
+                return False, target_id
+
+            try:
+                await self._conn.execute("BEGIN")
+                await self._conn.execute(
+                    queries.INSERT_CHAT_FEEDBACK,
+                    (pair_id, rater_id, target_id, value, self._now()),
+                )
+                await self._conn.execute(queries.INCREMENT_RATING, (value, target_id))
+                await self._conn.execute(queries.DELETE_PENDING_RATING, (rater_id,))
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
+
+            return True, target_id
+
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)
         active_chats = await self.fetchone(queries.STATS_ACTIVE_CHATS)
         queue = await self.fetchone(queries.STATS_QUEUE)
         reports = await self.fetchone(queries.STATS_REPORTS)
-        banned = await self.fetchone(queries.STATS_BANNED)
+        banned_perm = await self.fetchone(queries.STATS_BANNED)
+        banned_temp = await self.fetchone(queries.STATS_TEMP_BANNED, (self._now(),))
+        banned = (int(banned_perm["count"]) if banned_perm else 0) + (
+            int(banned_temp["count"]) if banned_temp else 0
+        )
         return {
             "users": int(users["count"]) if users else 0,
             "active_chats": int(active_chats["count"]) if active_chats else 0,
             "queue": int(queue["count"]) if queue else 0,
             "reports": int(reports["count"]) if reports else 0,
-            "banned": int(banned["count"]) if banned else 0,
+            "banned": banned,
         }
 
     async def get_active_user_ids(self) -> list[int]:
-        rows = await self.fetchall(queries.SELECT_ACTIVE_USERS)
+        rows = await self.fetchall(queries.SELECT_ACTIVE_USERS, (self._now(),))
         return [int(row["user_id"]) for row in rows]
+
+    async def get_partner_history(self, user_id: int) -> set[int]:
+        rows = await self.fetchall(queries.SELECT_PARTNER_HISTORY, (user_id, user_id, user_id))
+        result: set[int] = set()
+        for row in rows:
+            partner_id = row["partner_id"]
+            if partner_id is not None:
+                result.add(int(partner_id))
+        return result
 
     async def get_interests(self, user_id: int) -> str:
         row = await self.fetchone(queries.SELECT_INTERESTS, (user_id,))
@@ -214,6 +333,33 @@ class Database:
 
     async def set_skip_until(self, user_id: int, skip_until: str) -> None:
         await self.execute(queries.UPDATE_SKIP_UNTIL, (skip_until, user_id))
+
+    async def get_auto_search(self, user_id: int) -> bool:
+        row = await self.fetchone(queries.SELECT_AUTO_SEARCH, (user_id,))
+        return bool(row["auto_search"]) if row else False
+
+    async def set_auto_search(self, user_id: int, value: bool) -> None:
+        await self.execute(queries.UPDATE_AUTO_SEARCH, (1 if value else 0, user_id))
+
+    async def get_content_filter(self, user_id: int) -> bool:
+        row = await self.fetchone(queries.SELECT_CONTENT_FILTER, (user_id,))
+        return bool(row["content_filter"]) if row else True
+
+    async def set_content_filter(self, user_id: int, value: bool) -> None:
+        await self.execute(queries.UPDATE_CONTENT_FILTER, (1 if value else 0, user_id))
+
+    async def get_lang(self, user_id: int) -> str:
+        row = await self.fetchone(queries.SELECT_LANG, (user_id,))
+        if not row:
+            return "ru"
+        value = (row["lang"] or "").strip().lower()
+        return value if value in {"ru", "en"} else "ru"
+
+    async def set_lang(self, user_id: int, lang: str) -> None:
+        normalized = lang.strip().lower()
+        if normalized not in {"ru", "en"}:
+            normalized = "ru"
+        await self.execute(queries.UPDATE_LANG, (normalized, user_id))
 
     async def get_all_premium_until(self) -> list[str]:
         rows = await self.fetchall(queries.SELECT_ALL_PREMIUM_UNTIL)
