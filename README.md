@@ -101,6 +101,16 @@ If `TELEGRAM_PROXY` is empty, the bot also tries system proxy vars (`ALL_PROXY`,
 python -m src.main
 ```
 
+### Troubleshooting
+- `git pull` fails with `__pycache__` conflicts:
+```bash
+find src -type d -name "__pycache__" -prune -exec rm -rf {} +
+find src -type f -name "*.pyc" -delete
+git pull
+```
+- `Cannot connect to host api.telegram.org:443`:
+  set `TELEGRAM_PROXY` in `.env` (or use `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY`).
+
 ### Admin Commands
 - `/admin` - admin panel
 - `/ban <user_id>` - permanent ban
