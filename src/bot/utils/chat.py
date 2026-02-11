@@ -2,6 +2,7 @@ from typing import Optional, Tuple
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import Message
 
 from ...db.database import Database
 from .constants import STATE_IDLE
@@ -24,6 +25,30 @@ async def safe_send_message(bot: Bot, user_id: int, text: str, reply_markup=None
         return True
     except (TelegramForbiddenError, TelegramBadRequest):
         return False
+
+
+def _is_not_modified_error(exc: TelegramBadRequest) -> bool:
+    return "message is not modified" in str(exc).lower()
+
+
+async def safe_edit_message_text(message: Message, text: str, reply_markup=None, **kwargs) -> bool:
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, **kwargs)
+        return True
+    except TelegramBadRequest as exc:
+        if _is_not_modified_error(exc):
+            return False
+        raise
+
+
+async def safe_edit_message_reply_markup(message: Message, reply_markup=None) -> bool:
+    try:
+        await message.edit_reply_markup(reply_markup=reply_markup)
+        return True
+    except TelegramBadRequest as exc:
+        if _is_not_modified_error(exc):
+            return False
+        raise
 
 
 async def end_chat(

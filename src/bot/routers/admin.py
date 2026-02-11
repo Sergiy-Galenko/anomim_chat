@@ -17,7 +17,12 @@ from ..keyboards.admin_menu import (
     report_action_keyboard,
 )
 from ..keyboards.report_menu import report_reason_label
-from ..utils.chat import end_chat, safe_send_message
+from ..utils.chat import (
+    end_chat,
+    safe_edit_message_reply_markup,
+    safe_edit_message_text,
+    safe_send_message,
+)
 from ..utils.constants import PREMIUM_INFO_TEXT_EN, PREMIUM_INFO_TEXT_RU, STATE_IDLE
 from ..utils.i18n import button_variants, tr
 from ..utils.premium import add_premium_days, is_premium_until
@@ -199,7 +204,7 @@ async def admin_close(callback: CallbackQuery, db: Database, config: Config) -> 
         await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
         return
 
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await safe_edit_message_reply_markup(callback.message, reply_markup=None)
     await callback.answer()
 
 
@@ -211,7 +216,11 @@ async def admin_stats(callback: CallbackQuery, db: Database, config: Config) -> 
         return
 
     data = await db.stats()
-    await callback.message.edit_text(_stats_text(data, lang), reply_markup=admin_menu_keyboard(lang))
+    await safe_edit_message_text(
+        callback.message,
+        _stats_text(data, lang),
+        reply_markup=admin_menu_keyboard(lang),
+    )
     await callback.answer()
 
 
@@ -251,7 +260,7 @@ async def admin_reports(callback: CallbackQuery, db: Database, config: Config) -
 
     report = await db.get_next_report()
     if not report:
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(
                 lang,
                 "🧾 Жалобы\n----------------\nНовых жалоб нет.",
@@ -271,7 +280,7 @@ async def admin_reports(callback: CallbackQuery, db: Database, config: Config) -
         f"{tr(lang, 'Причина', 'Reason')}: {report_reason_label(report['reason'], lang)}\n"
         f"{tr(lang, 'Дата', 'Date')}: {report['created_at']}"
     )
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         text, reply_markup=report_action_keyboard(int(report["id"]), lang)
     )
     await callback.answer()
@@ -292,7 +301,7 @@ async def admin_report_ban(callback: CallbackQuery, db: Database, config: Config
 
     report = await db.get_report_by_id(report_id)
     if not report:
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(lang, "Жалоба не найдена.", "Report not found."),
             reply_markup=admin_menu_keyboard(lang),
         )
@@ -325,7 +334,7 @@ async def admin_report_ban(callback: CallbackQuery, db: Database, config: Config
     await db.resolve_report(report_id, "banned", callback.from_user.id)
     await db.add_incident(callback.from_user.id, target_id, "report_ban", str(report_id))
 
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         tr(
             lang,
             f"Готово. Пользователь {target_id} заблокирован.",
@@ -351,7 +360,7 @@ async def admin_report_ignore(callback: CallbackQuery, db: Database, config: Con
 
     report = await db.get_report_by_id(report_id)
     if not report:
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(lang, "Жалоба не найдена.", "Report not found."),
             reply_markup=admin_menu_keyboard(lang),
         )
@@ -361,7 +370,7 @@ async def admin_report_ignore(callback: CallbackQuery, db: Database, config: Con
     await db.resolve_report(report_id, "ignored", callback.from_user.id)
     await db.add_incident(callback.from_user.id, int(report["reported_id"]), "report_ignore", str(report_id))
 
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         tr(
             lang,
             f"Жалоба {report_id} проигнорирована.",
@@ -383,7 +392,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
     total = len(user_ids)
 
     if total == 0:
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(
                 lang,
                 "👥 Активные пользователи: 0\n----------------\nНет активных сессий.",
@@ -407,7 +416,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
     chunks = _chunk_lines(lines)
 
     # Update panel with summary and send the list in separate messages if needed.
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         tr(
             lang,
             f"{header}\n----------------\nСписок отправлен ниже.",
@@ -531,7 +540,7 @@ async def admin_confirm_ban(
     )
 
     await state.clear()
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         tr(
             lang,
             f"Готово. Пользователь {target_id} заблокирован.",
@@ -593,7 +602,7 @@ async def admin_confirm_unban(
     await db.set_state(int(target_id), STATE_IDLE)
 
     await state.clear()
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         tr(
             lang,
             f"Готово. Пользователь {target_id} разблокирован.",

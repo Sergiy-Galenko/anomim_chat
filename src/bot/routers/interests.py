@@ -8,6 +8,7 @@ from ...db.database import Database
 from ..keyboards.interests_menu import interests_inline_keyboard
 from ..keyboards.main_menu import main_menu_keyboard
 from ..utils.admin import is_admin
+from ..utils.chat import safe_edit_message_text
 from ..utils.constants import STATE_CHATTING
 from ..utils.i18n import button_variants, tr
 from ..utils.interests import (
@@ -133,7 +134,7 @@ async def interests_callback(
         await db.set_interests(user_id, "")
         await db.set_only_interest(user_id, False)
         await state.clear()
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(
                 lang,
                 "Интересы очищены. Поиск будет общим.",
@@ -149,7 +150,7 @@ async def interests_callback(
         return
     elif action == "back":
         await state.clear()
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(lang, "Возвращаюсь в меню.", "Returning to menu."),
             reply_markup=None,
         )
@@ -166,7 +167,7 @@ async def interests_callback(
         await db.set_only_interest(user_id, bool(only_interest))
         await state.clear()
         interests_text = format_interest_list(sorted(selected), lang)
-        await callback.message.edit_text(
+        await safe_edit_message_text(callback.message,
             tr(
                 lang,
                 f"Интересы сохранены: {interests_text}",
@@ -182,7 +183,7 @@ async def interests_callback(
         return
 
     text = _interests_text(selected, is_premium, only_interest, lang)
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         text,
         reply_markup=interests_inline_keyboard(selected, is_premium, only_interest, lang),
     )

@@ -6,6 +6,7 @@ from ...db.database import Database
 from ..keyboards.settings_menu import settings_keyboard
 from ..keyboards.main_menu import main_menu_keyboard
 from ..utils.constants import RULES_TEXT_EN, RULES_TEXT_RU, STATE_CHATTING
+from ..utils.chat import safe_edit_message_reply_markup, safe_edit_message_text
 from ..utils.i18n import button_variants, tr, yes_no
 from ..utils.admin import is_admin
 from ..utils.interests import format_interest_list, parse_interests
@@ -159,7 +160,7 @@ async def close_settings(callback: CallbackQuery, db: Database, config: Config) 
     lang = await db.get_lang(user_id)
     state = await get_state(db, user_id)
     if callback.message:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await safe_edit_message_reply_markup(callback.message, reply_markup=None)
         await callback.message.answer(
             tr(lang, "Настройки сохранены.", "Settings saved."),
             reply_markup=main_menu_keyboard(
@@ -207,7 +208,7 @@ async def _refresh_settings(callback: CallbackQuery, db: Database, user_id: int)
     auto_search = await db.get_auto_search(user_id)
     content_filter = await db.get_content_filter(user_id)
     lang = await db.get_lang(user_id)
-    await callback.message.edit_text(
+    await safe_edit_message_text(callback.message,
         _settings_text(lang, auto_search, content_filter),
         reply_markup=settings_keyboard(auto_search, content_filter, lang),
     )

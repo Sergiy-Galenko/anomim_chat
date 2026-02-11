@@ -9,7 +9,12 @@ from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
 from ..keyboards.match_menu import searching_keyboard
 from ..routers.match import _attempt_match
-from ..utils.chat import end_chat, get_partner, safe_send_message
+from ..utils.chat import (
+    end_chat,
+    get_partner,
+    safe_edit_message_reply_markup,
+    safe_send_message,
+)
 from ..utils.constants import SKIP_COOLDOWN_SECONDS, STATE_CHATTING, STATE_IDLE, STATE_SEARCHING
 from ..utils.content_filter import contains_blocked_content
 from ..utils.i18n import any_button, tr
@@ -265,10 +270,7 @@ async def rate_partner(callback: CallbackQuery, db: Database) -> None:
         return
 
     if callback.message:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
+        await safe_edit_message_reply_markup(callback.message, reply_markup=None)
 
     await callback.answer(tr(lang, "Оценка сохранена.", "Rating saved."))
     if callback.message:
