@@ -4,7 +4,10 @@ import sys
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp_socks import ProxyConnectionError, ProxyError, ProxyTimeoutError
 
 if __name__ == "__main__" and __package__ in (None, ""):
     # Allow running as a script: `python src/main.py`
@@ -26,7 +29,17 @@ async def main() -> None:
     db = Database(config.db_path)
     await db.connect()
 
-    bot = Bot(token=config.token)
+    try:
+        session = AiohttpSession(
+            proxy=config.telegram_proxy,
+            timeout=config.telegram_timeout_sec,
+        )
+    except RuntimeError as exc:
+        # aiogram raises RuntimeError when TELEGRAM_PROXY is set but aiohttp-socks is missing.
+        logging.error("%s", exc)
+        logging.error("Install dependencies from requirements.txt and restart.")
+        raise SystemExit(1) from exc
+    bot = Bot(token=config.token, session=session)
     dp = Dispatcher(storage=MemoryStorage())
 
     # Dependencies for handlers.
@@ -45,6 +58,19 @@ async def main() -> None:
 
     try:
         await dp.start_polling(bot)
+    except (TelegramNetworkError, ProxyError, ProxyConnectionError, ProxyTimeoutError) as exc:
+        logging.error("Failed to connect to Telegram API: %s", exc)
+        if config.telegram_proxy:
+            logging.error(
+                "Current TELEGRAM_PROXY=%s. Check that it is reachable and valid.",
+                config.telegram_proxy,
+            )
+        else:
+            logging.error(
+                "Set TELEGRAM_PROXY in .env (example: socks5://user:pass@host:1080) "
+                "if your network blocks api.telegram.org."
+            )
+        raise SystemExit(1) from exc
     finally:
         await db.close()
         await bot.session.close()

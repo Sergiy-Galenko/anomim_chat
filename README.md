@@ -93,7 +93,7 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 ```
-Fill in `TOKEN`, `ADMIN_ID` (comma-separated if multiple), and optionally `DB_PATH`, `PROMO_CODES`, `TRIAL_DAYS`.
+Fill in `TOKEN`, `ADMIN_ID` (comma-separated if multiple), and optionally `DB_PATH`, `PROMO_CODES`, `TRIAL_DAYS`, `TELEGRAM_PROXY`, `TELEGRAM_TIMEOUT_SEC`.
 
 4. Start the bot:
 ```bash
