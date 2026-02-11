@@ -52,6 +52,22 @@ def _parse_positive_float(raw: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _resolve_telegram_proxy() -> Optional[str]:
+    for key in (
+        "TELEGRAM_PROXY",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return None
+
+
 def load_config() -> Config:
     # Load environment variables from .env if present.
     load_dotenv()
@@ -64,7 +80,7 @@ def load_config() -> Config:
     db_path = os.getenv("DB_PATH", "ghostchat.db").strip()
     promo_codes = _parse_promo_codes(os.getenv("PROMO_CODES", ""))
     trial_days = int(os.getenv("TRIAL_DAYS", "3").strip() or "3")
-    telegram_proxy = os.getenv("TELEGRAM_PROXY", "").strip() or None
+    telegram_proxy = _resolve_telegram_proxy()
     telegram_timeout_sec = _parse_positive_float(
         os.getenv("TELEGRAM_TIMEOUT_SEC", ""),
         default=60.0,

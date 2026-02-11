@@ -94,6 +94,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 Fill in `TOKEN`, `ADMIN_ID` (comma-separated if multiple), and optionally `DB_PATH`, `PROMO_CODES`, `TRIAL_DAYS`, `TELEGRAM_PROXY`, `TELEGRAM_TIMEOUT_SEC`.
+If `TELEGRAM_PROXY` is empty, the bot also tries system proxy vars (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`).
 
 4. Start the bot:
 ```bash
