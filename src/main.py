@@ -1,7 +1,14 @@
 import asyncio
 import logging
 import sys
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings(
+    "ignore",
+    message=r'.*model_custom_emoji_id.*UniqueGiftColors.*protected namespace "model_".*',
+    category=UserWarning,
+)
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
