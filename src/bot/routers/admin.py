@@ -631,15 +631,15 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
         await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
         return
 
-    user_ids = await db.get_active_user_ids()
+    user_ids = await db.get_all_user_ids()
     total = len(user_ids)
 
     if total == 0:
         await safe_edit_message_text(callback.message,
             tr(
                 lang,
-                "👥 Активные пользователи: 0\n----------------\nНет активных сессий.",
-                "👥 Active users: 0\n----------------\nNo active sessions.",
+                "👥 Все пользователи: 0\n----------------\nВ базе пока нет пользователей.",
+                "👥 All users: 0\n----------------\nThere are no users in the database yet.",
             ),
             reply_markup=admin_menu_keyboard(lang),
         )
@@ -654,7 +654,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
         except Exception:
             lines.append(f"{idx}. {user_id} — {tr(lang, 'недоступен', 'unavailable')}")
 
-    header = tr(lang, f"👥 Активные пользователи: {total}", f"👥 Active users: {total}")
+    header = tr(lang, f"👥 Все пользователи: {total}", f"👥 All users: {total}")
     chunks = _chunk_lines(lines)
 
     # Update panel with summary and send the list in separate messages if needed.

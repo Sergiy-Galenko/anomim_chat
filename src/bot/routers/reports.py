@@ -14,6 +14,7 @@ from ..utils.admin import is_admin
 from ..utils.constants import STATE_CHATTING
 from ..utils.i18n import button_variants, tr
 from ..utils.users import ensure_user, get_state, is_banned
+from ..utils.virtual_companions import is_virtual_companion
 
 router = Router()
 
@@ -54,6 +55,22 @@ async def start_report(
         )
         return
 
+    partner_id, _ = await get_partner(db, user_id)
+    if partner_id and is_virtual_companion(partner_id):
+        await message.answer(
+            tr(
+                lang,
+                "На встроенную виртуальную собеседницу жалобу отправить нельзя.",
+                "You can't send a report on the built-in virtual companion.",
+            ),
+            reply_markup=main_menu_keyboard(
+                show_end=True,
+                is_admin=is_admin(user_id, config),
+                lang=lang,
+            ),
+        )
+        return
+
     await state.set_state(ReportStates.waiting_reason)
     await state.update_data(lang=lang)
     await message.answer(
@@ -88,6 +105,21 @@ async def handle_report_reason(
         await message.answer(
             tr(lang, "Диалог уже завершен.", "Chat already ended."),
             reply_markup=main_menu_keyboard(
+                is_admin=is_admin(user_id, config),
+                lang=lang,
+            ),
+        )
+        return
+    if is_virtual_companion(partner_id):
+        await state.clear()
+        await message.answer(
+            tr(
+                lang,
+                "На встроенную виртуальную собеседницу жалобу отправить нельзя.",
+                "You can't send a report on the built-in virtual companion.",
+            ),
+            reply_markup=main_menu_keyboard(
+                show_end=True,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),

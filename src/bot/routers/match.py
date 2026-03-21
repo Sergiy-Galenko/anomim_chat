@@ -19,6 +19,12 @@ from ..utils.i18n import any_button, tr
 from ..utils.interests import parse_interests
 from ..utils.premium import is_premium_until
 from ..utils.users import ensure_user, get_state, is_banned
+from ..utils.virtual_companions import (
+    VIRTUAL_COMPANION_QUEUE_THRESHOLD,
+    build_virtual_intro,
+    build_virtual_match_text,
+    pick_virtual_companion,
+)
 
 router = Router()
 
@@ -78,6 +84,7 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
 
 async def _attempt_match(message: Message, db: Database, config: Config, user_id: int) -> bool:
     # Try to match with another waiting user based on interests.
+    matched_virtual_id: int | None = None
     async with db.lock:
         # Ensure the user is still searching before matching.
         current_state = await get_state(db, user_id)
@@ -101,15 +108,54 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             candidates=candidates,
         )
         if not candidate_id:
+            queue_size = await db.get_queue_size()
+            if queue_size > VIRTUAL_COMPANION_QUEUE_THRESHOLD:
+                return False
+
+            matched_virtual_id = pick_virtual_companion(user_id, partner_history)
+            await db.remove_from_queue(user_id)
+            await db.set_state(user_id, STATE_CHATTING)
+            await db.create_pair(user_id, matched_virtual_id)
+            await db.increment_chats(user_id)
+            candidate_id = matched_virtual_id
+        else:
+            await db.remove_from_queue(user_id)
+            await db.remove_from_queue(candidate_id)
+            await db.set_state(user_id, STATE_CHATTING)
+            await db.set_state(candidate_id, STATE_CHATTING)
+            await db.create_pair(user_id, candidate_id)
+            await db.increment_chats(user_id)
+            await db.increment_chats(candidate_id)
+
+    if matched_virtual_id is not None:
+        user_lang = await db.get_lang(user_id)
+        sent_user = await safe_send_message(
+            message.bot,
+            user_id,
+            build_virtual_match_text(user_lang),
+            reply_markup=main_menu_keyboard(
+                show_end=True,
+                is_admin=is_admin(user_id, config),
+                lang=user_lang,
+            ),
+        )
+        if not sent_user:
+            await end_chat(
+                db,
+                message.bot,
+                user_id,
+                collect_feedback=False,
+                reason_ru="Собеседник недоступен. Попробуйте еще раз.",
+                reason_en="Partner is unavailable. Please try again.",
+            )
             return False
 
-        await db.remove_from_queue(user_id)
-        await db.remove_from_queue(candidate_id)
-        await db.set_state(user_id, STATE_CHATTING)
-        await db.set_state(candidate_id, STATE_CHATTING)
-        await db.create_pair(user_id, candidate_id)
-        await db.increment_chats(user_id)
-        await db.increment_chats(candidate_id)
+        await safe_send_message(
+            message.bot,
+            user_id,
+            build_virtual_intro(matched_virtual_id, user_id, user_lang),
+        )
+        return True
 
     user_lang = await db.get_lang(user_id)
     candidate_lang = await db.get_lang(candidate_id)

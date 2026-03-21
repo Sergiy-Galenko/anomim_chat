@@ -283,6 +283,12 @@ WHERE state IN ('searching', 'chatting')
 ORDER BY user_id ASC
 """
 
+SELECT_ALL_USERS = """
+SELECT user_id
+FROM users
+ORDER BY user_id ASC
+"""
+
 SELECT_PARTNER_HISTORY = """
 SELECT DISTINCT
     CASE

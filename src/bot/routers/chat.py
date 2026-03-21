@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -19,6 +19,11 @@ from ..utils.constants import SKIP_COOLDOWN_SECONDS, STATE_CHATTING, STATE_IDLE,
 from ..utils.i18n import any_button, tr
 from ..utils.admin import is_admin
 from ..utils.users import ensure_user, format_until_text, get_active_restrictions, get_state, is_banned, is_muted
+from ..utils.virtual_companions import (
+    build_virtual_admin_text,
+    is_virtual_companion,
+    send_virtual_reply,
+)
 
 router = Router()
 
@@ -115,7 +120,6 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
     )
 
     partner_id, _ = await get_partner(db, user_id)
-    partner_lang = await db.get_lang(partner_id) if partner_id else lang
     await end_chat(
         db,
         message.bot,
@@ -163,6 +167,13 @@ async def admin_partner_info(message: Message, db: Database, config: Config) -> 
         await message.answer(
             tr(lang, "Собеседник не найден.", "Partner not found."),
             reply_markup=main_menu_keyboard(is_admin=True, lang=lang),
+        )
+        return
+
+    if is_virtual_companion(partner_id):
+        await message.answer(
+            build_virtual_admin_text(partner_id, lang),
+            reply_markup=main_menu_keyboard(show_end=True, is_admin=True, lang=lang),
         )
         return
 
@@ -216,6 +227,17 @@ async def admin_ban_partner(message: Message, db: Database, config: Config) -> N
         await message.answer(
             tr(lang, "Собеседник не найден.", "Partner not found."),
             reply_markup=main_menu_keyboard(is_admin=True, lang=lang),
+        )
+        return
+
+    if is_virtual_companion(partner_id):
+        await message.answer(
+            tr(
+                lang,
+                "Встроенную виртуальную собеседницу нельзя заблокировать.",
+                "The built-in virtual companion can't be banned.",
+            ),
+            reply_markup=main_menu_keyboard(show_end=True, is_admin=True, lang=lang),
         )
         return
 
@@ -296,6 +318,75 @@ def _merge_caption(tag: str, caption: str | None) -> str:
     return tag
 
 
+async def _archive_media_message(
+    db: Database,
+    sender_id: int,
+    receiver_id: int,
+    message: Message,
+) -> None:
+    if message.photo:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="photo",
+            file_id=message.photo[-1].file_id,
+            caption=message.caption or "",
+        )
+    elif message.video:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="video",
+            file_id=message.video.file_id,
+            caption=message.caption or "",
+        )
+    elif message.animation:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="animation",
+            file_id=message.animation.file_id,
+            caption=message.caption or "",
+        )
+    elif message.audio:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="audio",
+            file_id=message.audio.file_id,
+            caption=message.caption or "",
+        )
+    elif message.voice:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="voice",
+            file_id=message.voice.file_id,
+        )
+    elif message.video_note:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="video_note",
+            file_id=message.video_note.file_id,
+        )
+    elif message.sticker:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="sticker",
+            file_id=message.sticker.file_id,
+        )
+    elif message.document:
+        await db.add_media_record(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            media_type="document",
+            file_id=message.document.file_id,
+            caption=message.caption or "",
+        )
+
+
 @router.message()
 async def relay_message(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
@@ -343,6 +434,12 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
         )
         return
 
+    if is_virtual_companion(partner_id):
+        await _archive_media_message(db, user_id, partner_id, message)
+        user_lang = await db.get_lang(user_id)
+        await send_virtual_reply(message.bot, user_id, partner_id, message, user_lang)
+        return
+
     show_sender = is_admin(partner_id, config)
     partner_lang = await db.get_lang(partner_id)
     tag = _sender_tag(message, partner_lang) if show_sender else ""
@@ -355,85 +452,40 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             await message.bot.send_photo(
                 partner_id, message.photo[-1].file_id, caption=caption
             )
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="photo",
-                file_id=message.photo[-1].file_id,
-                caption=message.caption or "",
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.video:
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_video(partner_id, message.video.file_id, caption=caption)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="video",
-                file_id=message.video.file_id,
-                caption=message.caption or "",
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.animation:
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_animation(partner_id, message.animation.file_id, caption=caption)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="animation",
-                file_id=message.animation.file_id,
-                caption=message.caption or "",
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.audio:
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_audio(partner_id, message.audio.file_id, caption=caption)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="audio",
-                file_id=message.audio.file_id,
-                caption=message.caption or "",
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.voice:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_voice(partner_id, message.voice.file_id)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="voice",
-                file_id=message.voice.file_id,
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.video_note:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_video_note(partner_id, message.video_note.file_id)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="video_note",
-                file_id=message.video_note.file_id,
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.sticker:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_sticker(partner_id, message.sticker.file_id)
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="sticker",
-                file_id=message.sticker.file_id,
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         elif message.document:
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_document(
                 partner_id, message.document.file_id, caption=caption
             )
-            await db.add_media_record(
-                sender_id=user_id,
-                receiver_id=partner_id,
-                media_type="document",
-                file_id=message.document.file_id,
-                caption=message.caption or "",
-            )
+            await _archive_media_message(db, user_id, partner_id, message)
         else:
             await message.bot.send_message(
                 partner_id,

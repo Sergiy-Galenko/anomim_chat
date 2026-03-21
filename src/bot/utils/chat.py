@@ -9,6 +9,7 @@ from .constants import STATE_IDLE
 from ..keyboards.match_menu import find_new_keyboard
 from ..keyboards.rating_menu import rating_keyboard
 from .i18n import tr
+from .virtual_companions import is_virtual_companion
 
 
 async def get_partner(db: Database, user_id: int) -> Tuple[Optional[int], Optional[int]]:
@@ -64,13 +65,19 @@ async def end_chat(
     partner_id, pair_id = await get_partner(db, user_id)
     if not pair_id or not partner_id:
         return None
+    partner_is_virtual = is_virtual_companion(partner_id)
 
     await db.end_pair(pair_id)
     await db.set_state(user_id, STATE_IDLE)
-    await db.set_state(partner_id, STATE_IDLE)
+    if not partner_is_virtual:
+        await db.set_state(partner_id, STATE_IDLE)
 
     await db.clear_pending_rating(user_id)
-    await db.clear_pending_rating(partner_id)
+    if not partner_is_virtual:
+        await db.clear_pending_rating(partner_id)
+
+    collect_feedback = collect_feedback and not partner_is_virtual
+    notify_partner = notify_partner and not partner_is_virtual
 
     if collect_feedback:
         if notify_user:
@@ -109,4 +116,4 @@ async def end_chat(
                 reply_markup=rating_keyboard(),
             )
 
-    return partner_id
+    return None if partner_is_virtual else partner_id

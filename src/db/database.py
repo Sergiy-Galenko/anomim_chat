@@ -350,6 +350,10 @@ class Database:
         rows = await self.fetchall(queries.SELECT_ACTIVE_USERS, (self._now(),))
         return [int(row["user_id"]) for row in rows]
 
+    async def get_all_user_ids(self) -> list[int]:
+        rows = await self.fetchall(queries.SELECT_ALL_USERS)
+        return [int(row["user_id"]) for row in rows]
+
     async def get_partner_history(self, user_id: int) -> set[int]:
         rows = await self.fetchall(queries.SELECT_PARTNER_HISTORY, (user_id, user_id, user_id))
         result: set[int] = set()
