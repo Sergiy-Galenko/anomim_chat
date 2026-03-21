@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{.git/**,.venv/**,venv/**,__pycache__/**,.env,.env.*,ghostchat.db}"
+    }
+  }
+}

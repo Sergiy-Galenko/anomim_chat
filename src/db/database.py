@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import aiosqlite
@@ -14,10 +15,22 @@ class Database:
         # Simple lock to serialize critical DB operations like matching.
         self.lock = asyncio.Lock()
 
+    def _resolve_db_file(self) -> Optional[Path]:
+        if not self.db_path or self.db_path == ":memory:" or self.db_path.startswith("file:"):
+            return None
+        return Path(self.db_path).expanduser()
+
     async def connect(self) -> None:
+        db_file = self._resolve_db_file()
+        if db_file is not None:
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA foreign_keys = ON")
+        await self._conn.execute("PRAGMA busy_timeout = 5000")
+        if db_file is not None:
+            await self._conn.execute("PRAGMA journal_mode = WAL")
         await self._conn.executescript(queries.CREATE_TABLES)
         await self._ensure_columns()
         await self._ensure_report_columns()

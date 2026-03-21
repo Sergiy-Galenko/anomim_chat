@@ -41,6 +41,20 @@ cp .env.example .env
 python -m src.main
 ```
 
+### Deploy on Vercel
+- В репозиторий добавлен Vercel-совместимый Python webhook-handler в `api/index.py`.
+- В настройках проекта на Vercel нужно задать `TOKEN`, `ADMIN_ID`, а при необходимости `TELEGRAM_WEBHOOK_SECRET`, `PROMO_CODES`, `TRIAL_DAYS`, `TELEGRAM_TIMEOUT_SEC`, `TELEGRAM_PROXY`.
+- Если `DB_PATH` на Vercel не задан, приложение автоматически использует `/tmp/ghostchat.db`, чтобы деплой мог запуститься.
+- Важно: `/tmp` на Vercel эфемерен. Бот сможет собираться и принимать апдейты, но данные SQLite будут теряться при cold start и смене инстанса. Для production нужен внешний persistent DB.
+- После деплоя установите webhook на `https://<your-project>.vercel.app/api`. Если используете `TELEGRAM_WEBHOOK_SECRET`, передайте то же значение как `secret_token`.
+
+Пример:
+```bash
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://<your-project>.vercel.app/api" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
 ### Админ-команды
 - `/admin` - админ-панель
 - `/ban <user_id>` - перманентный бан
@@ -99,6 +113,20 @@ If `TELEGRAM_PROXY` is empty, the bot also tries system proxy vars (`ALL_PROXY`,
 4. Start the bot:
 ```bash
 python -m src.main
+```
+
+### Deploy on Vercel
+- The repo now includes a Vercel-compatible Python webhook function in `api/index.py`.
+- Add `TOKEN`, `ADMIN_ID`, and optionally `TELEGRAM_WEBHOOK_SECRET`, `PROMO_CODES`, `TRIAL_DAYS`, `TELEGRAM_TIMEOUT_SEC`, `TELEGRAM_PROXY` in Vercel Project Settings.
+- If `DB_PATH` is not set on Vercel, the app falls back to `/tmp/ghostchat.db` so the deployment can boot.
+- Important: `/tmp` is ephemeral on Vercel. The bot can build and receive updates, but SQLite data will be lost across cold starts and instance changes. Use an external database before treating Vercel as production hosting.
+- Point Telegram webhook to `https://<your-project>.vercel.app/api`. If you set `TELEGRAM_WEBHOOK_SECRET`, use the same value in Telegram webhook setup.
+
+Example:
+```bash
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://<your-project>.vercel.app/api" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
 
 ### Troubleshooting

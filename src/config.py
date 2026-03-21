@@ -14,6 +14,7 @@ class Config:
     trial_days: int
     telegram_proxy: Optional[str]
     telegram_timeout_sec: float
+    telegram_webhook_secret: Optional[str]
 
 
 def _parse_admin_ids(raw: str) -> List[int]:
@@ -68,16 +69,25 @@ def _resolve_telegram_proxy() -> Optional[str]:
     return None
 
 
+def _resolve_db_path() -> str:
+    raw = os.getenv("DB_PATH", "").strip()
+    if raw:
+        return raw
+    if os.getenv("VERCEL"):
+        return "/tmp/ghostchat.db"
+    return "ghostchat.db"
+
+
 def load_config() -> Config:
     # Load environment variables from .env if present.
     load_dotenv()
 
     token = os.getenv("TOKEN", "").strip()
     if not token:
-        raise RuntimeError("TOKEN is required in .env")
+        raise RuntimeError("TOKEN environment variable is required")
 
     admin_ids = _parse_admin_ids(os.getenv("ADMIN_ID", ""))
-    db_path = os.getenv("DB_PATH", "ghostchat.db").strip()
+    db_path = _resolve_db_path()
     promo_codes = _parse_promo_codes(os.getenv("PROMO_CODES", ""))
     trial_days = int(os.getenv("TRIAL_DAYS", "3").strip() or "3")
     telegram_proxy = _resolve_telegram_proxy()
@@ -85,6 +95,7 @@ def load_config() -> Config:
         os.getenv("TELEGRAM_TIMEOUT_SEC", ""),
         default=60.0,
     )
+    telegram_webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip() or None
 
     return Config(
         token=token,
@@ -94,4 +105,5 @@ def load_config() -> Config:
         trial_days=trial_days,
         telegram_proxy=telegram_proxy,
         telegram_timeout_sec=telegram_timeout_sec,
+        telegram_webhook_secret=telegram_webhook_secret,
     )
