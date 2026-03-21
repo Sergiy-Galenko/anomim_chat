@@ -9,6 +9,275 @@ from .i18n import tr
 
 VIRTUAL_COMPANION_QUEUE_THRESHOLD = 2
 
+SHARED_INTROS_RU = (
+    "Ну привет. Посмотрим, как ты умеешь держать внимание.",
+    "Я на связи. Люблю, когда диалог сразу с искрой.",
+    "Давай без лишней скромности, мне так интереснее.",
+    "Я уже тут. Не люблю сухие переписки.",
+    "Посмотрим, насколько у тебя легкая рука на сообщения.",
+)
+SHARED_INTROS_EN = (
+    "Well hi. Let's see how well you can hold attention.",
+    "I'm here. I like chats that start with some spark.",
+    "Let's skip the extra shyness, that's more interesting.",
+    "I'm already online. I don't like dry conversations.",
+    "Let's see how smooth your texting game is.",
+)
+
+SHARED_GREETING_REPLIES_RU = (
+    "Привет. Уже звучит лучше.",
+    "Хорошее начало, мне нравится.",
+    "Вот так уже можно продолжать.",
+    "С такого захода я обычно не ухожу сразу.",
+    "Ммм, нормально начинаешь.",
+)
+SHARED_GREETING_REPLIES_EN = (
+    "Hi. That already sounds better.",
+    "Good start, I like it.",
+    "Now that's something we can continue.",
+    "An opening like that usually keeps me around.",
+    "Mm, that's a decent start.",
+)
+
+SHARED_QUESTION_REPLIES_RU = (
+    "Хороший вопрос. Люблю, когда не молчат.",
+    "Можно и так. Но мне нравится интрига.",
+    "Вопрос принимается. Чем дальше удивишь?",
+    "Отвечу, если темп не потеряешь.",
+    "Сначала вопрос, потом посмотрим на твой следующий ход.",
+)
+SHARED_QUESTION_REPLIES_EN = (
+    "Good question. I like it when people don't go quiet.",
+    "That works too. But I like a little intrigue.",
+    "Question accepted. What surprises me next?",
+    "I'll answer if you keep the pace.",
+    "Question first, then let's see your next move.",
+)
+
+SHARED_TEXT_REPLIES_RU = (
+    "У тебя приятный ритм сообщений.",
+    "Это уже звучит намного живее.",
+    "Вот на таких сообщениях и держится интерес.",
+    "Неожиданно хорошо идешь.",
+    "Мне нравится, когда диалог не рассыпается.",
+    "Ты явно умеешь держать подачу.",
+    "Ммм, у этого разговора появляется вкус.",
+    "Продолжай в том же духе, пока мне нравится.",
+)
+SHARED_TEXT_REPLIES_EN = (
+    "You have a nice rhythm in your messages.",
+    "That already feels much more alive.",
+    "This is the kind of line that keeps interest going.",
+    "You're doing unexpectedly well.",
+    "I like it when a chat doesn't fall apart.",
+    "You clearly know how to keep the tone.",
+    "Mm, this conversation is getting some flavor.",
+    "Keep going like that, I like it so far.",
+)
+
+SHARED_SHORT_REPLIES_RU = (
+    "Да.",
+    "Нет.",
+    "Может.",
+    "Возможно.",
+    "Ммм.",
+    "Слушаю.",
+    "Продолжай.",
+    "Интересно.",
+    "Смелее.",
+    "Неожиданно.",
+    "Ого.",
+    "Неплохо.",
+    "Уже лучше.",
+    "Еще давай.",
+    "И дальше?",
+    "Не тормози.",
+    "Хороший ход.",
+    "Мне нравится.",
+    "Очень даже.",
+    "Ну да.",
+    "Да ну?",
+    "Вот так.",
+    "Неплохой старт.",
+    "Хочу еще.",
+    "Это мило.",
+    "Это смело.",
+    "Это приятно.",
+    "Лови темп.",
+    "Пиши дальше.",
+    "Я здесь.",
+    "Ммм.",
+    "Ну да?)",
+    "Слушаю дальше.",
+    "Так, уже интересно.",
+    "Еще одно.",
+    "Продолжай, не остывай.",
+    "И что потом?",
+    "Не тормози 😉",
+)
+SHARED_SHORT_REPLIES_EN = (
+    "Yeah.",
+    "No.",
+    "Maybe.",
+    "Perhaps.",
+    "Mm.",
+    "Listening.",
+    "Go on.",
+    "Interesting.",
+    "Bolder.",
+    "Unexpected.",
+    "Oh.",
+    "Not bad.",
+    "Better already.",
+    "Give me more.",
+    "And then?",
+    "Don't slow down.",
+    "Good move.",
+    "I like that.",
+    "Very nice.",
+    "Oh yeah.",
+    "No way?",
+    "Like that.",
+    "Good start.",
+    "Want more.",
+    "That's cute.",
+    "That's bold.",
+    "That's nice.",
+    "Keep the pace.",
+    "Text me more.",
+    "I'm here.",
+    "Mm.",
+    "Oh yeah?)",
+    "I'm listening.",
+    "Okay, now it's interesting.",
+    "One more.",
+    "Keep going, don't cool off.",
+    "And what happens next?",
+    "Don't slow down 😉",
+)
+
+SHARED_COMPLIMENT_REPLIES_RU = (
+    "Люблю, когда так заходят. Продолжай.",
+    "Опасно приятно это читать.",
+    "Еще чуть-чуть и я начну слишком довольно улыбаться.",
+    "Такой тон я точно замечаю.",
+    "Комплименты тебе явно даются легко.",
+    "С таким темпом ты меня быстро разбалуешь.",
+)
+SHARED_COMPLIMENT_REPLIES_EN = (
+    "I like an opening like that. Keep going.",
+    "That's dangerously nice to read.",
+    "A few more lines like that and I'll be smiling too much.",
+    "I definitely notice that tone.",
+    "Compliments clearly come easy to you.",
+    "At this pace you're going to spoil me fast.",
+)
+
+SHARED_NIGHT_REPLIES_RU = (
+    "Ночные переписки обычно самые цепляющие.",
+    "С таким настроением сон может подождать.",
+    "Вечером флирт почему-то звучит лучше.",
+    "Люблю этот поздний вайб.",
+    "У ночных сообщений всегда свой особый вкус.",
+    "Поздний час тебе явно идет.",
+)
+SHARED_NIGHT_REPLIES_EN = (
+    "Late-night chats are usually the most addictive.",
+    "With that mood, sleep can wait.",
+    "Flirting somehow sounds better at night.",
+    "I like this late-night vibe.",
+    "Late messages always have their own flavor.",
+    "This hour suits you.",
+)
+
+SHARED_BOLD_REPLIES_RU = (
+    "Смело. Мне такой заход нравится.",
+    "Вот это уже ближе к опасно интересному.",
+    "Ты уверенно качаешь этот диалог.",
+    "Еще одно такое сообщение и я точно зацеплюсь.",
+    "Люблю, когда не прячут настрой за скучными словами.",
+    "У тебя опасно уверенная подача.",
+)
+SHARED_BOLD_REPLIES_EN = (
+    "Bold. I like that kind of move.",
+    "Now that's getting dangerously interesting.",
+    "You're carrying this chat with confidence.",
+    "One more message like that and I'll definitely lean in.",
+    "I like it when people don't hide the mood behind boring words.",
+    "You have a dangerously confident delivery.",
+)
+
+SHARED_LONG_REPLIES_RU = (
+    "Длинные сообщения тебе тоже идут.",
+    "Мне нравится, когда человек не ленится раскрыться.",
+    "Так уже чувствуется настроение, а не просто слова.",
+    "В длинных сообщениях тебя читать даже интереснее.",
+    "Вот это уже похоже на настоящий разговор.",
+)
+SHARED_LONG_REPLIES_EN = (
+    "Longer messages suit you too.",
+    "I like it when someone actually opens up.",
+    "Now it feels like mood, not just words.",
+    "You're even more interesting in longer messages.",
+    "Now this actually feels like a real conversation.",
+)
+
+SHARED_MEDIA_REPLIES_RU = (
+    "Ты умеешь добавить искру в чат.",
+    "Такой поворот точно не делает диалог скучным.",
+    "Ммм, теперь внимание держится крепче.",
+    "С этим чат сразу просыпается.",
+    "Люблю, когда разговор оживает не только текстом.",
+)
+SHARED_MEDIA_REPLIES_EN = (
+    "You know how to add some spark to a chat.",
+    "That definitely keeps the conversation from going flat.",
+    "Mm, now the attention holds tighter.",
+    "That wakes the chat up right away.",
+    "I like it when a conversation comes alive beyond text.",
+)
+
+SHARED_DOING_REPLIES_RU = (
+    "Сейчас немного дразню тебя сообщениями.",
+    "Сижу тут и оцениваю твой стиль 😉",
+    "Переписываюсь с тобой, этого уже достаточно.",
+    "Сейчас явно уделяю внимание этому чату.",
+    "Ловлю настроение и жду твой следующий ход.",
+)
+SHARED_DOING_REPLIES_EN = (
+    "Right now I'm teasing you a little with messages.",
+    "Sitting here and judging your style 😉",
+    "Talking to you, and that's enough for now.",
+    "I'm clearly giving this chat my attention right now.",
+    "Catching the mood and waiting for your next move.",
+)
+
+SHARED_MEETING_REPLIES_RU = (
+    "Ты быстро переходишь к интересному сценарию.",
+    "Сначала удержи этот вайб в сообщениях.",
+    "С таким заходом я хотя бы дочитаю тебя до конца 😉",
+    "Не спеши, мне нравится сам разогрев диалога.",
+)
+SHARED_MEETING_REPLIES_EN = (
+    "You move to the interesting scenario pretty fast.",
+    "First keep this vibe going in the chat.",
+    "With an opening like that I'll at least read you to the end 😉",
+    "No rush, I like the warm-up part too.",
+)
+
+SHARED_PLAYFUL_REPLIES_RU = (
+    "Ах, вот это уже настроение.",
+    "Мне нравится, когда ты так оживаешь.",
+    "Ну вот, диалог стал заметно веселее.",
+    "С таким вайбом можно продолжать долго.",
+)
+SHARED_PLAYFUL_REPLIES_EN = (
+    "Ah, now that's a mood.",
+    "I like it when you wake up like that.",
+    "Okay, the chat just got noticeably more fun.",
+    "With a vibe like that this can go on for a while.",
+)
+
 
 @dataclass(frozen=True)
 class VirtualCompanion:
@@ -81,12 +350,24 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
             "Stay in that rhythm, I like it.",
         ),
         short_replies_ru=(
+            "Да.",
+            "Ммм.",
+            "И?",
+            "Еще.",
+            "Продолжай.",
+            "Не остывай.",
             "Да?)",
             "Ммм?)",
             "Продолжай 😉",
             "И дальше?",
         ),
         short_replies_en=(
+            "Yeah.",
+            "Mm.",
+            "And?",
+            "More.",
+            "Go on.",
+            "Stay warm.",
             "Yeah?)",
             "Mm?)",
             "Go on 😉",
@@ -152,12 +433,24 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
             "There's something in that.",
         ),
         short_replies_ru=(
+            "Да.",
+            "Слушаю.",
+            "Я тут.",
+            "Еще.",
+            "Неплохо.",
+            "Спокойно.",
             "Да?",
             "Слушаю.",
             "Я тут.",
             "Еще.",
         ),
         short_replies_en=(
+            "Yeah.",
+            "Listening.",
+            "I'm here.",
+            "More.",
+            "Not bad.",
+            "Easy.",
             "Yeah?",
             "I'm listening.",
             "I'm here.",
@@ -224,11 +517,23 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
         ),
         short_replies_ru=(
             "Ммм.",
+            "Смелее.",
+            "Еще.",
+            "Ого.",
+            "Вот так.",
+            "Неожиданно.",
+            "Ммм.",
             "Да ну?)",
             "Еще.",
             "Смелее.",
         ),
         short_replies_en=(
+            "Mm.",
+            "Bolder.",
+            "More.",
+            "Oh.",
+            "Like that.",
+            "Unexpected.",
             "Mm.",
             "Really?)",
             "More.",
@@ -294,12 +599,24 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
             "That sounds nice.",
         ),
         short_replies_ru=(
+            "Да.",
+            "Я слушаю.",
+            "Еще чуть.",
+            "Нежно.",
+            "Приятно.",
+            "Не спеши.",
             "Да)",
             "Я слушаю)",
             "Еще чуть-чуть.",
             "Не теряй темп.",
         ),
         short_replies_en=(
+            "Yeah.",
+            "I'm listening.",
+            "A bit more.",
+            "Softly.",
+            "Nice.",
+            "No rush.",
             "Yeah)",
             "I'm listening)",
             "A little more.",
@@ -365,12 +682,24 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
             "This is going unexpectedly well.",
         ),
         short_replies_ru=(
+            "Ахах.",
+            "И?",
+            "Дальше.",
+            "Живо.",
+            "Нравится.",
+            "Еще давай.",
             "Ахах)",
             "Да ладно)",
             "И?",
             "Дальше 😉",
         ),
         short_replies_en=(
+            "Haha.",
+            "And?",
+            "Go on.",
+            "Lively.",
+            "Like it.",
+            "More then.",
             "Haha)",
             "No way)",
             "And?",
@@ -414,7 +743,10 @@ def build_virtual_match_text(lang: str) -> str:
 
 def build_virtual_intro(companion_id: int, user_id: int, lang: str) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
-    lines = companion.intros_ru if lang == "ru" else companion.intros_en
+    lines = _join_lines(
+        companion.intros_ru if lang == "ru" else companion.intros_en,
+        SHARED_INTROS_RU if lang == "ru" else SHARED_INTROS_EN,
+    )
     return _pick_line(lines, f"intro:{companion_id}:{user_id}")
 
 
@@ -459,35 +791,100 @@ async def send_virtual_reply(
 def compose_virtual_reply_text(companion_id: int, message: Message, lang: str) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
     seed = f"reply:{companion_id}:{message.message_id}"
+    greeting_lines = _join_lines(
+        companion.greeting_replies_ru if lang == "ru" else companion.greeting_replies_en,
+        SHARED_GREETING_REPLIES_RU if lang == "ru" else SHARED_GREETING_REPLIES_EN,
+    )
+    question_lines = _join_lines(
+        companion.question_replies_ru if lang == "ru" else companion.question_replies_en,
+        SHARED_QUESTION_REPLIES_RU if lang == "ru" else SHARED_QUESTION_REPLIES_EN,
+    )
+    text_lines = _join_lines(
+        companion.text_replies_ru if lang == "ru" else companion.text_replies_en,
+        SHARED_TEXT_REPLIES_RU if lang == "ru" else SHARED_TEXT_REPLIES_EN,
+    )
+    short_lines = _join_lines(
+        companion.short_replies_ru if lang == "ru" else companion.short_replies_en,
+        SHARED_SHORT_REPLIES_RU if lang == "ru" else SHARED_SHORT_REPLIES_EN,
+    )
+    media_lines = _join_lines(
+        companion.media_replies_ru if lang == "ru" else companion.media_replies_en,
+        SHARED_MEDIA_REPLIES_RU if lang == "ru" else SHARED_MEDIA_REPLIES_EN,
+    )
 
     if message.photo or message.video or message.animation or message.audio or message.document:
-        lines = companion.media_replies_ru if lang == "ru" else companion.media_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(media_lines, seed)
     if message.voice or message.video_note or message.sticker:
-        lines = companion.short_replies_ru if lang == "ru" else companion.short_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(short_lines, seed)
 
     text = ((message.text or message.caption) or "").strip().lower()
     if not text:
-        lines = companion.short_replies_ru if lang == "ru" else companion.short_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(short_lines, seed)
 
     if any(token in text for token in ("привет", "хай", "hello", "hi", "hey", "ку")):
-        lines = companion.greeting_replies_ru if lang == "ru" else companion.greeting_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(greeting_lines, seed)
+    if _contains_any(
+        text,
+        ("что дела", "чем занима", "делаешь", "doing", "up to", "busy"),
+    ):
+        extra_lines = SHARED_DOING_REPLIES_RU if lang == "ru" else SHARED_DOING_REPLIES_EN
+        return _pick_line(extra_lines, seed)
+    if _contains_any(
+        text,
+        ("красив", "мила", "нежн", "sweet", "cute", "beautiful", "pretty"),
+    ):
+        extra_lines = (
+            SHARED_COMPLIMENT_REPLIES_RU if lang == "ru" else SHARED_COMPLIMENT_REPLIES_EN
+        )
+        return _pick_line(extra_lines, seed)
+    if _contains_any(
+        text,
+        ("ахах", "хаха", "lol", "lmao", ")))", "😂", "😏", "😉"),
+    ):
+        extra_lines = SHARED_PLAYFUL_REPLIES_RU if lang == "ru" else SHARED_PLAYFUL_REPLIES_EN
+        return _pick_line(extra_lines, seed)
+    if _contains_any(
+        text,
+        ("ноч", "спишь", "вечер", "sleep", "night", "late", "bedtime"),
+    ):
+        extra_lines = SHARED_NIGHT_REPLIES_RU if lang == "ru" else SHARED_NIGHT_REPLIES_EN
+        return _pick_line(extra_lines, seed)
+    if _contains_any(
+        text,
+        ("поцел", "обнять", "kiss", "hug", "хочу тебя", "want you"),
+    ):
+        extra_lines = SHARED_BOLD_REPLIES_RU if lang == "ru" else SHARED_BOLD_REPLIES_EN
+        return _pick_line(extra_lines, seed)
+    if _contains_any(
+        text,
+        ("встрет", "увид", "погуля", "meet", "see you", "go out", "date"),
+    ):
+        extra_lines = SHARED_MEETING_REPLIES_RU if lang == "ru" else SHARED_MEETING_REPLIES_EN
+        return _pick_line(extra_lines, seed)
     if "?" in text:
-        lines = companion.question_replies_ru if lang == "ru" else companion.question_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(question_lines, seed)
     if len(text) <= 12:
-        lines = companion.short_replies_ru if lang == "ru" else companion.short_replies_en
-        return _pick_line(lines, seed)
+        return _pick_line(short_lines, seed)
+    if len(text) >= 90:
+        extra_lines = SHARED_LONG_REPLIES_RU if lang == "ru" else SHARED_LONG_REPLIES_EN
+        return _pick_line(extra_lines, seed)
 
-    lines = companion.text_replies_ru if lang == "ru" else companion.text_replies_en
-    return _pick_line(lines, seed)
+    return _pick_line(text_lines, seed)
 
 
 def _pick_line(lines: tuple[str, ...], seed: str) -> str:
     return random.Random(seed).choice(lines)
+
+
+def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _join_lines(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for group in groups:
+        merged.extend(group)
+    return tuple(merged)
 
 
 def _reply_delay(companion_id: int, message: Message) -> float:
