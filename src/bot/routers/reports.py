@@ -13,7 +13,7 @@ from ..utils.chat import end_chat, get_partner
 from ..utils.admin import is_admin
 from ..utils.constants import STATE_CHATTING
 from ..utils.i18n import button_variants, tr
-from ..utils.users import ensure_user, get_state, is_banned
+from ..utils.users import ensure_user, format_until_text, get_state, is_banned
 from ..utils.virtual_companions import is_virtual_companion
 
 router = Router()
@@ -138,7 +138,7 @@ async def handle_report_reason(
                 + f"{tr(admin_lang, 'От', 'From')}: {user_id}\n"
                 + f"{tr(admin_lang, 'На', 'Against')}: {partner_id}\n"
                 + f"{tr(admin_lang, 'Причина', 'Reason')}: {report_reason_label(reason_code, admin_lang)}\n"
-                + f"{tr(admin_lang, 'Дата', 'Date')}: {created_at}"
+                + f"{tr(admin_lang, 'Дата', 'Date')}: {format_until_text(created_at)}"
             )
             await message.bot.send_message(admin_id, text)
 

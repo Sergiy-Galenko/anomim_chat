@@ -23,7 +23,9 @@ def format_premium_until(value: str) -> str:
     dt = _parse_iso(value)
     if not dt:
         return "—"
-    return dt.strftime("%Y-%m-%d %H:%M UTC")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%d.%m.%Y %H:%M UTC")
 
 
 def add_premium_days(current_until: str, days: int) -> str:

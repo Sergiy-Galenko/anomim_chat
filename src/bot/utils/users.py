@@ -50,7 +50,7 @@ def format_until_text(value: str) -> str:
         return "—"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.strftime("%Y-%m-%d %H:%M UTC")
+    return dt.strftime("%d.%m.%Y %H:%M UTC")
 
 
 def _parse_iso(value: str) -> datetime | None:

@@ -222,6 +222,10 @@ def _broadcast_audience_label(audience: str, lang: str) -> str:
     return labels.get(audience, audience)
 
 
+def _format_dt(value: str) -> str:
+    return format_until_text(value) if value else "—"
+
+
 def _status_label(row, lang: str) -> str:
     if bool(row["is_banned"]):
         return tr(lang, "забанен", "banned")
@@ -309,7 +313,7 @@ def _broadcast_panel_text(rows, lang: str) -> str:
         lines.append(
             f"#{row['id']} | {_broadcast_audience_label(row['audience'], lang)} | "
             f"{row['sent_count']}/{int(row['sent_count']) + int(row['failed_count'])} | "
-            f"{row['created_at']}"
+            f"{_format_dt(row['created_at'])}"
         )
         lines.append(f"   {_short_text(row['message'] or '', 90)}")
     return "\n".join(lines)
@@ -369,10 +373,10 @@ def _user_card_text(
     username = f"@{row['username']}" if row["username"] else "—"
     full_name = " ".join([part for part in [row["first_name"], row["last_name"]] if part]).strip()
     full_name = full_name or tr(lang, "Без имени", "No name")
-    premium_until = row["premium_until"] or "—"
-    banned_until = row["banned_until"] or "—"
-    muted_until = row["muted_until"] or "—"
-    last_seen = row["last_seen_at"] or "—"
+    premium_until = _format_dt(row["premium_until"])
+    banned_until = _format_dt(row["banned_until"])
+    muted_until = _format_dt(row["muted_until"])
+    last_seen = _format_dt(row["last_seen_at"])
     return (
         tr(lang, "👤 Карточка пользователя\n", "👤 User Card\n")
         + "----------------\n"
@@ -380,7 +384,7 @@ def _user_card_text(
         + f"{tr(lang, 'Ник', 'Username')}: {username}\n"
         + f"{tr(lang, 'Имя', 'Name')}: {full_name}\n"
         + f"{tr(lang, 'Статус', 'Status')}: {_status_label(row, lang)}\n"
-        + f"{tr(lang, 'Создан', 'Created')}: {row['created_at']}\n"
+        + f"{tr(lang, 'Создан', 'Created')}: {_format_dt(row['created_at'])}\n"
         + f"{tr(lang, 'Последняя активность', 'Last seen')}: {last_seen}\n"
         + f"{tr(lang, 'Рейтинг', 'Rating')}: {row['rating']}\n"
         + f"{tr(lang, 'Чатов', 'Chats')}: {row['chats_count']}\n"
@@ -403,7 +407,7 @@ def _user_incidents_text(user_id: int, rows, lang: str) -> str:
     for row in rows:
         payload = _short_text(row["payload"] or "—", 80)
         lines.append(
-            f"{row['created_at']} | {row['type']} | "
+            f"{_format_dt(row['created_at'])} | {row['type']} | "
             f"A:{row['actor_id']} -> T:{row['target_id']} | {payload}"
         )
     return "\n".join(lines)
@@ -527,7 +531,7 @@ def _media_panel_text(
         lines.append(
             f"{idx}. {_media_type_label(row['media_type'], lang)} | "
             f"{tr(lang, 'от', 'from')} {row['sender_id']} -> {row['receiver_id']} | "
-            f"{row['created_at']}"
+            f"{_format_dt(row['created_at'])}"
         )
         lines.append(f"   {tr(lang, 'Подпись', 'Caption')}: {caption}")
 
@@ -548,7 +552,7 @@ def _media_preview_caption(row, lang: str) -> str:
         f"ID: {row['id']}",
         f"{tr(lang, 'От', 'From')}: {row['sender_id']}",
         f"{tr(lang, 'Кому', 'To')}: {row['receiver_id']}",
-        f"{tr(lang, 'Дата', 'Date')}: {row['created_at']}",
+        f"{tr(lang, 'Дата', 'Date')}: {_format_dt(row['created_at'])}",
     ]
     if row["caption"]:
         lines.append(f"{tr(lang, 'Подпись', 'Caption')}: {_short_text(row['caption'], 500)}")
@@ -883,7 +887,7 @@ async def admin_reports(callback: CallbackQuery, db: Database, config: Config) -
         f"{tr(lang, 'От', 'From')}: {report['reporter_id']}\n"
         f"{tr(lang, 'На', 'Against')}: {report['reported_id']}\n"
         f"{tr(lang, 'Причина', 'Reason')}: {report_reason_label(report['reason'], lang)}\n"
-        f"{tr(lang, 'Дата', 'Date')}: {report['created_at']}"
+        f"{tr(lang, 'Дата', 'Date')}: {_format_dt(report['created_at'])}"
     )
     await safe_edit_message_text(callback.message,
         text, reply_markup=report_action_keyboard(int(report["id"]), lang)

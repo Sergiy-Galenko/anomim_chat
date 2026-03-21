@@ -51,7 +51,7 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
         (
             "Ваш профиль:\n"
             f"ID: {user_id}\n"
-            f"Дата регистрации: {user['created_at']}\n"
+            f"Дата регистрации: {format_until_text(user['created_at'])}\n"
             f"Чатов: {user['chats_count']}\n"
             f"Рейтинг: {user['rating']}\n"
             f"Интересы: {interest_text}\n"
@@ -65,7 +65,7 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
         (
             "Your profile:\n"
             f"ID: {user_id}\n"
-            f"Registration date: {user['created_at']}\n"
+            f"Registration date: {format_until_text(user['created_at'])}\n"
             f"Chats: {user['chats_count']}\n"
             f"Rating: {user['rating']}\n"
             f"Interests: {interest_text}\n"
