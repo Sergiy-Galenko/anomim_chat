@@ -407,8 +407,8 @@ def pick_virtual_companion(user_id: int, partner_history: set[int]) -> int:
 def build_virtual_match_text(lang: str) -> str:
     return tr(
         lang,
-        "💬 Сейчас мало людей онлайн, поэтому подключена виртуальная собеседница.\nПишите сообщение.",
-        "💬 There are not many people online right now, so a virtual companion has joined the chat.\nSend a message.",
+        "✅ Собеседник найден. Пишите сообщение.",
+        "✅ Partner found. Start chatting.",
     )
 
 
