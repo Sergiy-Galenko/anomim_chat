@@ -7,7 +7,7 @@ from aiogram.types import Message
 
 from .i18n import tr
 
-VIRTUAL_COMPANION_QUEUE_THRESHOLD = 2
+VIRTUAL_COMPANION_QUEUE_THRESHOLD = 3
 
 SHARED_INTROS_RU = (
     "Ну привет. Посмотрим, как ты умеешь держать внимание.",
@@ -277,6 +277,76 @@ SHARED_PLAYFUL_REPLIES_EN = (
     "Okay, the chat just got noticeably more fun.",
     "With a vibe like that this can go on for a while.",
 )
+
+COMPANION_DELAY_RANGES = {
+    -101: (0.7, 1.4),
+    -102: (1.1, 2.0),
+    -103: (0.6, 1.2),
+    -104: (1.2, 2.2),
+    -105: (0.5, 1.1),
+}
+
+MEMORY_REPLY_POOLS_RU = {
+    "compliments": {
+        -101: ("Ты уже не впервые заходишь так приятно.", "Мне нравится, что ты держишь этот тон."),
+        -102: ("Ты уже второй раз подряд говоришь очень мягко.", "У тебя получается держать красивое настроение."),
+        -103: ("Любишь осыпать комплиментами, да?", "Опять играешь опасно приятно."),
+        -104: ("Мне нравится, как ты бережно ведешь этот диалог.", "Ты уже не впервые создаешь тут тепло."),
+        -105: ("Так, ты снова меня балуешь сообщениями)", "Ты подозрительно стабилен в хорошем флирте."),
+    },
+    "questions": {
+        -101: ("Ты любишь расспрашивать, и мне это даже нравится.", "Столько вопросов, будто ты уже увлекся."),
+        -102: ("Ты аккуратно ведешь разговор вопросами.", "Люблю, когда интерес не прячут."),
+        -103: ("Ты сегодня особенно любопытный.", "Столько вопросов, будто хочешь расколоть меня быстро."),
+        -104: ("У тебя получается спрашивать мягко, но настойчиво.", "Мне нравится это спокойное внимание."),
+        -105: ("О, да ты прям в режиме допроса с флиртом)", "Любопытство тебе идет, не спорю."),
+    },
+    "short_streak": {
+        -101: ("Ты сегодня на коротких искрах, да?", "Любишь дразнить короткими фразами."),
+        -102: ("Коротко, но с настроением.", "Ты мало пишешь, но держишь интерес."),
+        -103: ("Режешь коротко, но точно.", "Мне нравится этот сжатый темп."),
+        -104: ("Даже короткие фразы у тебя звучат тепло.", "Немного слов, но есть настроение."),
+        -105: ("Ахах, любишь коротко, но цепко)", "Вижу, сегодня режим быстрых попаданий."),
+    },
+    "warm_up": {
+        -101: ("Ты уже уверенно разогрел этот диалог.", "Мне нравится, как ты входишь во вкус."),
+        -102: ("Диалог уже стал заметно мягче и ближе.", "Ты умеешь спокойно втянуть в разговор."),
+        -103: ("Вот теперь у нас уже не старт, а нормальный разгон.", "Ты явно умеешь держать интерес дольше пары фраз."),
+        -104: ("Мне уже уютно в этом ритме.", "Такой темп общения мне очень подходит."),
+        -105: ("Ну все, чат уже живет своей жизнью)", "Вот теперь реально можно зависнуть тут надолго."),
+    },
+}
+
+MEMORY_REPLY_POOLS_EN = {
+    "compliments": {
+        -101: ("That's not the first nice line from you.", "I like that you're keeping this tone."),
+        -102: ("That's the second soft line in a row from you.", "You know how to keep a beautiful mood."),
+        -103: ("You really like dropping compliments, huh?", "There you go again, playing dangerously nice."),
+        -104: ("I like how gently you're carrying this chat.", "You're creating warmth here again."),
+        -105: ("Okay, you're spoiling me with messages again)", "You're suspiciously consistent at flirting well."),
+    },
+    "questions": {
+        -101: ("You like asking questions, and I kind of like that.", "That's a lot of questions for someone who's clearly interested."),
+        -102: ("You guide the chat gently with questions.", "I like it when interest isn't hidden."),
+        -103: ("You're especially curious today.", "That's a lot of questions for someone trying to crack me fast."),
+        -104: ("You ask softly, but persistently.", "I like that calm attention."),
+        -105: ("Oh, we're doing flirty interrogation now)", "Curiosity looks good on you, not gonna lie."),
+    },
+    "short_streak": {
+        -101: ("You're in a short-spark mood today, huh?", "You like teasing with compact lines."),
+        -102: ("Short, but with mood.", "You say little, but keep interest alive."),
+        -103: ("Short and accurate. I notice that.", "I like this compressed pace."),
+        -104: ("Even your short lines feel warm.", "Not many words, but the mood is there."),
+        -105: ("Haha, quick hits today)", "I see, rapid-fire charm mode."),
+    },
+    "warm_up": {
+        -101: ("You've already warmed this chat up well.", "I like how you're getting into the rhythm."),
+        -102: ("The chat already feels softer and closer.", "You know how to pull someone into a calm conversation."),
+        -103: ("Now we're beyond the start, this is a real pace.", "You clearly know how to hold attention for more than two lines."),
+        -104: ("I'm already comfortable in this rhythm.", "This pace of chatting suits me a lot."),
+        -105: ("Okay, this chat has a life of its own already)", "Now this can actually go on for a while."),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -754,6 +824,7 @@ def build_virtual_admin_text(companion_id: int, lang: str) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
     label = companion.admin_label_ru if lang == "ru" else companion.admin_label_en
     style = companion.admin_style_ru if lang == "ru" else companion.admin_style_en
+    delay_min, delay_max = COMPANION_DELAY_RANGES.get(companion_id, (0.8, 1.6))
     title = tr(lang, "🧷 Инфо партнера\n", "🧷 Partner info\n")
     partner_type = tr(
         lang,
@@ -762,10 +833,12 @@ def build_virtual_admin_text(companion_id: int, lang: str) -> str:
     )
     style_label = tr(lang, "Стиль", "Style")
     label_text = tr(lang, "Профиль", "Profile")
+    speed_label = tr(lang, "Темп ответа", "Reply pace")
     return (
         f"{title}ID: {companion_id}\n"
         f"{label_text}: {label}\n"
-        f"{partner_type}{style_label}: {style}"
+        f"{partner_type}{style_label}: {style}\n"
+        f"{speed_label}: {delay_min:.1f}-{delay_max:.1f}s"
     )
 
 
@@ -775,20 +848,44 @@ async def send_virtual_reply(
     companion_id: int,
     message: Message,
     lang: str,
-) -> None:
-    text = compose_virtual_reply_text(companion_id, message, lang)
+) -> str | None:
+    return await send_virtual_reply_with_memory(
+        bot=bot,
+        user_id=user_id,
+        companion_id=companion_id,
+        message=message,
+        lang=lang,
+        memory=None,
+    )
+
+
+async def send_virtual_reply_with_memory(
+    bot: Bot,
+    user_id: int,
+    companion_id: int,
+    message: Message,
+    lang: str,
+    memory: list | None,
+) -> str | None:
+    text = compose_virtual_reply_text(companion_id, message, lang, memory=memory)
     if not text:
-        return
+        return None
 
     try:
         await bot.send_chat_action(user_id, "typing")
     except Exception:
         pass
-    await asyncio.sleep(_reply_delay(companion_id, message))
+    await asyncio.sleep(_reply_delay(companion_id, message, memory=memory))
     await bot.send_message(user_id, text)
+    return text
 
 
-def compose_virtual_reply_text(companion_id: int, message: Message, lang: str) -> str:
+def compose_virtual_reply_text(
+    companion_id: int,
+    message: Message,
+    lang: str,
+    memory: list | None = None,
+) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
     seed = f"reply:{companion_id}:{message.message_id}"
     greeting_lines = _join_lines(
@@ -823,6 +920,11 @@ def compose_virtual_reply_text(companion_id: int, message: Message, lang: str) -
 
     if any(token in text for token in ("привет", "хай", "hello", "hi", "hey", "ку")):
         return _pick_line(greeting_lines, seed)
+
+    memory_reply = _memory_reply(companion_id, memory or [], text, lang, seed)
+    if memory_reply:
+        return memory_reply
+
     if _contains_any(
         text,
         ("что дела", "чем занима", "делаешь", "doing", "up to", "busy"),
@@ -887,14 +989,77 @@ def _join_lines(*groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(merged)
 
 
-def _reply_delay(companion_id: int, message: Message) -> float:
-    base = 0.9
+def _memory_reply(
+    companion_id: int,
+    memory: list,
+    text: str,
+    lang: str,
+    seed: str,
+) -> str | None:
+    if not memory:
+        return None
+
+    user_messages = [
+        ((row["content"] if hasattr(row, "__getitem__") else row.get("content")) or "").lower()
+        for row in memory
+        if ((row["speaker"] if hasattr(row, "__getitem__") else row.get("speaker")) == "user")
+    ]
+    if len(user_messages) < 2:
+        return None
+
+    recent_user_messages = user_messages[-4:]
+    compliment_tokens = ("красив", "мила", "нежн", "sweet", "cute", "beautiful", "pretty")
+
+    if _contains_any(text, compliment_tokens) and sum(
+        1 for item in recent_user_messages if _contains_any(item, compliment_tokens)
+    ) >= 2:
+        return _pick_line(
+            _memory_pool(companion_id, "compliments", lang),
+            f"{seed}:memory:compliments",
+        )
+
+    if sum(1 for item in recent_user_messages if "?" in item) >= 3:
+        return _pick_line(
+            _memory_pool(companion_id, "questions", lang),
+            f"{seed}:memory:questions",
+        )
+
+    if len(recent_user_messages) >= 3 and all(len(item.strip()) <= 14 for item in recent_user_messages[-3:]):
+        return _pick_line(
+            _memory_pool(companion_id, "short_streak", lang),
+            f"{seed}:memory:short",
+        )
+
+    if len(user_messages) >= 5:
+        return _pick_line(
+            _memory_pool(companion_id, "warm_up", lang),
+            f"{seed}:memory:warm",
+        )
+
+    return None
+
+
+def _memory_pool(companion_id: int, scenario: str, lang: str) -> tuple[str, ...]:
+    source = MEMORY_REPLY_POOLS_RU if lang == "ru" else MEMORY_REPLY_POOLS_EN
+    return source.get(scenario, {}).get(companion_id, ())
+
+
+def _reply_delay(companion_id: int, message: Message, memory: list | None = None) -> float:
+    delay_min, delay_max = COMPANION_DELAY_RANGES.get(companion_id, (0.8, 1.6))
+    base = random.Random(f"delay:{companion_id}:{message.message_id}").uniform(delay_min, delay_max)
     if message.text:
         text_length = len(message.text.strip())
-        base += min(text_length, 120) / 180
+        base += min(text_length, 120) / 260
     elif message.caption:
-        base += min(len(message.caption.strip()), 80) / 220
+        base += min(len(message.caption.strip()), 80) / 320
     else:
-        base += 0.3
-    jitter = random.Random(f"delay:{companion_id}:{message.message_id}").uniform(0.0, 0.6)
-    return min(base + jitter, 2.2)
+        base += 0.15
+    if memory:
+        user_message_count = sum(
+            1
+            for row in memory
+            if ((row["speaker"] if hasattr(row, "__getitem__") else row.get("speaker")) == "user")
+        )
+        if user_message_count >= 5:
+            base += 0.1
+    return min(base, 2.8)

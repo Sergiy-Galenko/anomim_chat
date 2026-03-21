@@ -51,6 +51,22 @@ class Database:
         async with self._conn.execute("PRAGMA table_info(users)") as cursor:
             rows = await cursor.fetchall()
         columns = {row["name"] for row in rows}
+        if "username" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''"
+            )
+        if "first_name" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT ''"
+            )
+        if "last_name" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT ''"
+            )
+        if "last_seen_at" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT ''"
+            )
         if "banned_until" not in columns:
             await self._conn.execute(
                 "ALTER TABLE users ADD COLUMN banned_until TEXT NOT NULL DEFAULT ''"
@@ -126,6 +142,24 @@ class Database:
 
     async def get_user(self, user_id: int) -> Optional[aiosqlite.Row]:
         return await self.fetchone(queries.SELECT_USER, (user_id,))
+
+    async def update_user_profile(
+        self,
+        user_id: int,
+        username: str = "",
+        first_name: str = "",
+        last_name: str = "",
+    ) -> None:
+        await self.execute(
+            queries.UPDATE_USER_PROFILE,
+            (
+                username.strip(),
+                first_name.strip(),
+                last_name.strip(),
+                self._now(),
+                user_id,
+            ),
+        )
 
     async def set_state(self, user_id: int, state: str) -> None:
         await self.execute(queries.UPDATE_STATE, (state, user_id))
@@ -232,6 +266,59 @@ class Database:
         row = await self.fetchone(queries.SELECT_PROMO_USE, (user_id, code))
         return row is not None
 
+    async def create_promo_code(
+        self,
+        code: str,
+        days: int,
+        usage_limit: int,
+        created_by: int | None,
+    ) -> None:
+        await self.execute(
+            queries.INSERT_PROMO_CODE,
+            (code.upper(), days, usage_limit, self._now(), created_by),
+        )
+
+    async def get_managed_promo_code(self, code: str) -> Optional[aiosqlite.Row]:
+        return await self.fetchone(queries.SELECT_PROMO_CODE, (code.upper(),))
+
+    async def get_recent_promo_codes(self, limit: int = 10) -> list[aiosqlite.Row]:
+        return await self.fetchall(queries.SELECT_RECENT_PROMO_CODES, (limit,))
+
+    async def redeem_managed_promo_code(
+        self,
+        user_id: int,
+        code: str,
+    ) -> tuple[str, int | None]:
+        normalized = code.upper()
+        async with self.lock:
+            promo = await self.fetchone(queries.SELECT_PROMO_CODE, (normalized,))
+            if not promo:
+                return "invalid", None
+            if not bool(promo["is_active"]):
+                return "inactive", None
+            if await self.has_used_promo(user_id, normalized):
+                return "used", None
+
+            usage_limit = int(promo["usage_limit"])
+            used_count = int(promo["used_count"])
+            if usage_limit > 0 and used_count >= usage_limit:
+                return "exhausted", None
+
+            assert self._conn is not None
+            try:
+                await self._conn.execute("BEGIN")
+                await self._conn.execute(
+                    queries.INSERT_PROMO_USE,
+                    (user_id, normalized, self._now()),
+                )
+                await self._conn.execute(queries.UPDATE_PROMO_CODE_USAGE, (normalized,))
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
+
+            return "ok", int(promo["days"])
+
     async def set_pending_rating(self, user_id: int, pair_id: int, target_id: int) -> None:
         await self.execute(
             queries.INSERT_PENDING_RATING,
@@ -328,6 +415,31 @@ class Database:
     async def delete_media_record(self, media_id: int) -> None:
         await self.execute(queries.DELETE_MEDIA_ARCHIVE_BY_ID, (media_id,))
 
+    async def add_virtual_memory(
+        self,
+        pair_id: int,
+        user_id: int,
+        companion_id: int,
+        speaker: str,
+        content: str,
+        keep_last: int = 12,
+    ) -> None:
+        normalized = " ".join((content or "").split()).strip()
+        if not normalized:
+            return
+        await self.execute(
+            queries.INSERT_VIRTUAL_DIALOG_MEMORY,
+            (pair_id, user_id, companion_id, speaker, normalized, self._now()),
+        )
+        await self.execute(
+            queries.DELETE_OLD_VIRTUAL_DIALOG_MEMORY,
+            (pair_id, pair_id, keep_last),
+        )
+
+    async def get_virtual_memory(self, pair_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+        rows = await self.fetchall(queries.SELECT_VIRTUAL_DIALOG_MEMORY, (pair_id, limit))
+        return list(reversed(rows))
+
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)
         active_chats = await self.fetchone(queries.STATS_ACTIVE_CHATS)
@@ -335,15 +447,40 @@ class Database:
         reports = await self.fetchone(queries.STATS_REPORTS)
         banned_perm = await self.fetchone(queries.STATS_BANNED)
         banned_temp = await self.fetchone(queries.STATS_TEMP_BANNED, (self._now(),))
+        new_users_24h = await self.fetchone(queries.COUNT_USERS_CREATED_SINCE, (self._days_ago(1),))
+        new_users_7d = await self.fetchone(queries.COUNT_USERS_CREATED_SINCE, (self._days_ago(7),))
+        active_users_24h = await self.fetchone(queries.COUNT_USERS_SEEN_SINCE, (self._days_ago(1),))
+        engaged_users = await self.fetchone(queries.COUNT_USERS_WITH_CHATS)
+        premium_active = await self.fetchone(queries.COUNT_PREMIUM_ACTIVE, (self._now(),))
+        premium_buyers = await self.fetchone(queries.COUNT_PREMIUM_BUYERS)
+        premium_purchases = await self.fetchone(queries.COUNT_PAYMENT_INCIDENTS)
+        promo_users = await self.fetchone(queries.COUNT_PROMO_USERS)
+        promo_codes = await self.fetchone(queries.COUNT_PROMO_CODES)
+        virtual_users = await self.fetchone(queries.COUNT_VIRTUAL_CHAT_USERS)
+        active_virtual_chats = await self.fetchone(queries.COUNT_ACTIVE_VIRTUAL_CHATS)
+        payment_rows = await self.fetchall(queries.SELECT_PAYMENT_INCIDENTS)
         banned = (int(banned_perm["count"]) if banned_perm else 0) + (
             int(banned_temp["count"]) if banned_temp else 0
         )
+        revenue_xtr = sum(self._payment_amount_from_payload(row["payload"] or "") for row in payment_rows)
         return {
             "users": int(users["count"]) if users else 0,
             "active_chats": int(active_chats["count"]) if active_chats else 0,
             "queue": int(queue["count"]) if queue else 0,
             "reports": int(reports["count"]) if reports else 0,
             "banned": banned,
+            "new_users_24h": int(new_users_24h["count"]) if new_users_24h else 0,
+            "new_users_7d": int(new_users_7d["count"]) if new_users_7d else 0,
+            "active_users_24h": int(active_users_24h["count"]) if active_users_24h else 0,
+            "engaged_users": int(engaged_users["count"]) if engaged_users else 0,
+            "premium_active": int(premium_active["count"]) if premium_active else 0,
+            "premium_buyers": int(premium_buyers["count"]) if premium_buyers else 0,
+            "premium_purchases": int(premium_purchases["count"]) if premium_purchases else 0,
+            "promo_users": int(promo_users["count"]) if promo_users else 0,
+            "promo_codes": int(promo_codes["count"]) if promo_codes else 0,
+            "virtual_users": int(virtual_users["count"]) if virtual_users else 0,
+            "active_virtual_chats": int(active_virtual_chats["count"]) if active_virtual_chats else 0,
+            "revenue_xtr": revenue_xtr,
         }
 
     async def get_active_user_ids(self) -> list[int]:
@@ -353,6 +490,44 @@ class Database:
     async def get_all_user_ids(self) -> list[int]:
         rows = await self.fetchall(queries.SELECT_ALL_USERS)
         return [int(row["user_id"]) for row in rows]
+
+    async def get_all_users(self) -> list[aiosqlite.Row]:
+        return await self.fetchall(queries.SELECT_ALL_USERS)
+
+    async def search_users(self, query: str, limit: int = 10) -> list[aiosqlite.Row]:
+        normalized = query.strip().lstrip("@")
+        if not normalized:
+            return []
+        wildcard = f"%{normalized}%"
+        return await self.fetchall(
+            queries.SEARCH_USERS,
+            (
+                normalized,
+                normalized,
+                wildcard,
+                wildcard,
+                wildcard,
+                wildcard,
+                normalized,
+                normalized,
+                limit,
+            ),
+        )
+
+    async def get_recent_incidents_for_user(
+        self,
+        user_id: int,
+        limit: int = 15,
+    ) -> list[aiosqlite.Row]:
+        return await self.fetchall(queries.SELECT_RECENT_INCIDENTS_FOR_USER, (user_id, user_id, limit))
+
+    async def count_incidents_for_user(self, user_id: int) -> int:
+        row = await self.fetchone(queries.COUNT_INCIDENTS_FOR_USER, (user_id, user_id))
+        return int(row["count"]) if row else 0
+
+    async def count_virtual_chats_for_user(self, user_id: int) -> int:
+        row = await self.fetchone(queries.COUNT_VIRTUAL_CHATS_FOR_USER, (user_id, user_id))
+        return int(row["count"]) if row else 0
 
     async def get_partner_history(self, user_id: int) -> set[int]:
         rows = await self.fetchall(queries.SELECT_PARTNER_HISTORY, (user_id, user_id, user_id))
@@ -428,3 +603,32 @@ class Database:
     async def get_all_premium_until(self) -> list[str]:
         rows = await self.fetchall(queries.SELECT_ALL_PREMIUM_UNTIL)
         return [row["premium_until"] for row in rows]
+
+    def _payment_amount_from_payload(self, payload: str) -> int:
+        normalized = (payload or "").strip()
+        if not normalized:
+            return 0
+
+        if "|" in normalized:
+            parts = normalized.split("|")
+            if len(parts) >= 2:
+                try:
+                    return int(parts[1])
+                except ValueError:
+                    return 0
+
+        if ":" in normalized and normalized.startswith("premium_"):
+            maybe_amount = normalized.split(":")[-1]
+            try:
+                return int(maybe_amount)
+            except ValueError:
+                pass
+
+        if normalized.startswith("premium_"):
+            try:
+                days = int(normalized.split("_", 1)[1])
+            except (IndexError, ValueError):
+                return 0
+            return {7: 29, 30: 99, 90: 249}.get(days, 0)
+
+        return 0

@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from .bot.middlewares.user_context import UserContextMiddleware
 from .bot.routers import admin, chat, interests, match, premium, profile, reports, start
 from .config import Config, load_config
 from .db.database import Database
@@ -51,6 +52,7 @@ def _build_dispatcher(db: Database, config: Config) -> Dispatcher:
 
     dp["db"] = db
     dp["config"] = config
+    dp.update.outer_middleware(UserContextMiddleware(db))
 
     dp.include_router(admin.router)
     dp.include_router(start.router)

@@ -6,8 +6,14 @@ from ..utils.i18n import tr
 def admin_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text=tr(lang, "📊 Статистика", "📊 Statistics"), callback_data="admin:stats")],
-        [InlineKeyboardButton(text=tr(lang, "👥 Все пользователи", "👥 All Users"), callback_data="admin:active_users")],
-        [InlineKeyboardButton(text=tr(lang, "🖼 Медиа файлы", "🖼 Media Files"), callback_data="admin:media")],
+        [
+            InlineKeyboardButton(text=tr(lang, "🔎 Поиск пользователя", "🔎 Find User"), callback_data="admin:search"),
+            InlineKeyboardButton(text=tr(lang, "👥 Все пользователи", "👥 All Users"), callback_data="admin:active_users"),
+        ],
+        [
+            InlineKeyboardButton(text=tr(lang, "🎟 Промокоды", "🎟 Promo Codes"), callback_data="admin:promos"),
+            InlineKeyboardButton(text=tr(lang, "🖼 Медиа файлы", "🖼 Media Files"), callback_data="admin:media"),
+        ],
         [InlineKeyboardButton(text=tr(lang, "🧾 Жалобы", "🧾 Reports"), callback_data="admin:reports")],
         [InlineKeyboardButton(text=tr(lang, "📥 Экспорт CSV", "📥 Export CSV"), callback_data="admin:export_stats")],
         [
@@ -91,5 +97,54 @@ def admin_media_item_keyboard(media_id: int, lang: str) -> InlineKeyboardMarkup:
                     callback_data=f"admin:media_delete:{media_id}",
                 )
             ]
+        ]
+    )
+
+
+def admin_user_card_keyboard(user_id: int, is_banned: bool, lang: str) -> InlineKeyboardMarkup:
+    action_button = InlineKeyboardButton(
+        text=tr(lang, "🔓 Разбанить", "🔓 Unban") if is_banned else tr(lang, "🔒 Забанить", "🔒 Ban"),
+        callback_data=f"admin:user_unban:{user_id}" if is_banned else f"admin:user_ban:{user_id}",
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "📜 История", "📜 History"),
+                    callback_data=f"admin:user_history:{user_id}",
+                )
+            ],
+            [action_button],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"),
+                    callback_data="admin:stats",
+                )
+            ],
+        ]
+    )
+
+
+def admin_promos_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "➕ Создать промокод", "➕ Create Promo Code"),
+                    callback_data="admin:promo_create",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "🔄 Обновить", "🔄 Refresh"),
+                    callback_data="admin:promos",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"),
+                    callback_data="admin:stats",
+                )
+            ],
         ]
     )

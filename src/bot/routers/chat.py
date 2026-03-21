@@ -22,7 +22,7 @@ from ..utils.users import ensure_user, format_until_text, get_active_restriction
 from ..utils.virtual_companions import (
     build_virtual_admin_text,
     is_virtual_companion,
-    send_virtual_reply,
+    send_virtual_reply_with_memory,
 )
 
 router = Router()
@@ -387,6 +387,28 @@ async def _archive_media_message(
         )
 
 
+def _virtual_memory_text(message: Message) -> str:
+    if message.text:
+        return message.text
+    if message.photo:
+        return f"[photo] {message.caption or ''}".strip()
+    if message.video:
+        return f"[video] {message.caption or ''}".strip()
+    if message.animation:
+        return f"[animation] {message.caption or ''}".strip()
+    if message.audio:
+        return f"[audio] {message.caption or ''}".strip()
+    if message.voice:
+        return "[voice]"
+    if message.video_note:
+        return "[video_note]"
+    if message.sticker:
+        return "[sticker]"
+    if message.document:
+        return f"[document] {message.caption or ''}".strip()
+    return ""
+
+
 @router.message()
 async def relay_message(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
@@ -421,7 +443,7 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
         )
         return
 
-    partner_id, _ = await get_partner(db, user_id)
+    partner_id, pair_id = await get_partner(db, user_id)
     if not partner_id:
         await db.set_state(user_id, STATE_IDLE)
         lang = await db.get_lang(user_id)
@@ -437,7 +459,33 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
     if is_virtual_companion(partner_id):
         await _archive_media_message(db, user_id, partner_id, message)
         user_lang = await db.get_lang(user_id)
-        await send_virtual_reply(message.bot, user_id, partner_id, message, user_lang)
+        if pair_id:
+            await db.add_virtual_memory(
+                pair_id=pair_id,
+                user_id=user_id,
+                companion_id=partner_id,
+                speaker="user",
+                content=_virtual_memory_text(message),
+            )
+            memory = await db.get_virtual_memory(pair_id, limit=10)
+        else:
+            memory = []
+        reply_text = await send_virtual_reply_with_memory(
+            message.bot,
+            user_id,
+            partner_id,
+            message,
+            user_lang,
+            memory=memory,
+        )
+        if pair_id and reply_text:
+            await db.add_virtual_memory(
+                pair_id=pair_id,
+                user_id=user_id,
+                companion_id=partner_id,
+                speaker="companion",
+                content=reply_text,
+            )
         return
 
     show_sender = is_admin(partner_id, config)

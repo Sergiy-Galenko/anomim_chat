@@ -85,6 +85,7 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
 async def _attempt_match(message: Message, db: Database, config: Config, user_id: int) -> bool:
     # Try to match with another waiting user based on interests.
     matched_virtual_id: int | None = None
+    virtual_pair_id: int | None = None
     async with db.lock:
         # Ensure the user is still searching before matching.
         current_state = await get_state(db, user_id)
@@ -115,7 +116,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             matched_virtual_id = pick_virtual_companion(user_id, partner_history)
             await db.remove_from_queue(user_id)
             await db.set_state(user_id, STATE_CHATTING)
-            await db.create_pair(user_id, matched_virtual_id)
+            virtual_pair_id = await db.create_pair(user_id, matched_virtual_id)
             await db.increment_chats(user_id)
             candidate_id = matched_virtual_id
         else:
@@ -150,11 +151,21 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             )
             return False
 
+        intro_text = build_virtual_intro(matched_virtual_id, user_id, user_lang)
         await safe_send_message(
             message.bot,
             user_id,
-            build_virtual_intro(matched_virtual_id, user_id, user_lang),
+            intro_text,
         )
+        if virtual_pair_id is not None:
+            await db.add_virtual_memory(
+                pair_id=virtual_pair_id,
+                user_id=user_id,
+                companion_id=matched_virtual_id,
+                speaker="companion",
+                content=intro_text,
+            )
+        await db.add_incident(user_id, matched_virtual_id, "virtual_match", "")
         return True
 
     user_lang = await db.get_lang(user_id)

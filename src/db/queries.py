@@ -3,6 +3,10 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,
     state TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
     is_banned INTEGER NOT NULL DEFAULT 0,
     banned_until TEXT NOT NULL DEFAULT '',
     muted_until TEXT NOT NULL DEFAULT '',
@@ -60,6 +64,16 @@ CREATE TABLE IF NOT EXISTS promo_uses (
     UNIQUE(user_id, code)
 );
 
+CREATE TABLE IF NOT EXISTS promo_codes (
+    code TEXT PRIMARY KEY,
+    days INTEGER NOT NULL,
+    usage_limit INTEGER NOT NULL,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    created_by INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS pending_ratings (
     user_id INTEGER PRIMARY KEY,
     pair_id INTEGER NOT NULL,
@@ -86,6 +100,16 @@ CREATE TABLE IF NOT EXISTS media_archive (
     caption TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS virtual_dialog_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pair_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    companion_id INTEGER NOT NULL,
+    speaker TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 SELECT_USER = "SELECT * FROM users WHERE user_id = ?"
@@ -95,6 +119,11 @@ VALUES (?, ?, ?, 0, 0, 0)
 """
 
 UPDATE_STATE = "UPDATE users SET state = ? WHERE user_id = ?"
+UPDATE_USER_PROFILE = """
+UPDATE users
+SET username = ?, first_name = ?, last_name = ?, last_seen_at = ?
+WHERE user_id = ?
+"""
 UPDATE_BANNED = "UPDATE users SET is_banned = ? WHERE user_id = ?"
 UPDATE_BANNED_UNTIL = "UPDATE users SET banned_until = ? WHERE user_id = ?"
 UPDATE_MUTED_UNTIL = "UPDATE users SET muted_until = ? WHERE user_id = ?"
@@ -199,6 +228,31 @@ INSERT INTO promo_uses (user_id, code, used_at)
 VALUES (?, ?, ?)
 """
 
+INSERT_PROMO_CODE = """
+INSERT INTO promo_codes (code, days, usage_limit, used_count, is_active, created_at, created_by)
+VALUES (?, ?, ?, 0, 1, ?, ?)
+"""
+
+SELECT_PROMO_CODE = """
+SELECT code, days, usage_limit, used_count, is_active, created_at, created_by
+FROM promo_codes
+WHERE code = ?
+LIMIT 1
+"""
+
+SELECT_RECENT_PROMO_CODES = """
+SELECT code, days, usage_limit, used_count, is_active, created_at, created_by
+FROM promo_codes
+ORDER BY created_at DESC
+LIMIT ?
+"""
+
+UPDATE_PROMO_CODE_USAGE = """
+UPDATE promo_codes
+SET used_count = used_count + 1
+WHERE code = ?
+"""
+
 INSERT_PENDING_RATING = """
 INSERT OR REPLACE INTO pending_ratings (user_id, pair_id, target_id, created_at)
 VALUES (?, ?, ?, ?)
@@ -220,6 +274,31 @@ VALUES (?, ?, ?, ?, ?)
 INSERT_MEDIA_ARCHIVE = """
 INSERT INTO media_archive (sender_id, receiver_id, media_type, file_id, caption, created_at)
 VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+INSERT_VIRTUAL_DIALOG_MEMORY = """
+INSERT INTO virtual_dialog_memory (pair_id, user_id, companion_id, speaker, content, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+SELECT_VIRTUAL_DIALOG_MEMORY = """
+SELECT speaker, content, created_at
+FROM virtual_dialog_memory
+WHERE pair_id = ?
+ORDER BY id DESC
+LIMIT ?
+"""
+
+DELETE_OLD_VIRTUAL_DIALOG_MEMORY = """
+DELETE FROM virtual_dialog_memory
+WHERE pair_id = ?
+  AND id NOT IN (
+    SELECT id
+    FROM virtual_dialog_memory
+    WHERE pair_id = ?
+    ORDER BY id DESC
+    LIMIT ?
+  )
 """
 
 DELETE_OLD_MEDIA_ARCHIVE = """
@@ -274,6 +353,80 @@ FROM users
 WHERE is_banned = 0 AND banned_until != '' AND banned_until > ?
 """
 
+COUNT_USERS_CREATED_SINCE = """
+SELECT COUNT(*) AS count
+FROM users
+WHERE created_at >= ?
+"""
+
+COUNT_USERS_SEEN_SINCE = """
+SELECT COUNT(*) AS count
+FROM users
+WHERE last_seen_at >= ?
+"""
+
+COUNT_USERS_WITH_CHATS = """
+SELECT COUNT(*) AS count
+FROM users
+WHERE chats_count > 0
+"""
+
+COUNT_PREMIUM_ACTIVE = """
+SELECT COUNT(*) AS count
+FROM users
+WHERE premium_until != '' AND premium_until > ?
+"""
+
+COUNT_PREMIUM_BUYERS = """
+SELECT COUNT(DISTINCT actor_id) AS count
+FROM incidents
+WHERE type = 'payment' AND actor_id IS NOT NULL
+"""
+
+COUNT_PAYMENT_INCIDENTS = """
+SELECT COUNT(*) AS count
+FROM incidents
+WHERE type = 'payment'
+"""
+
+COUNT_PROMO_USERS = """
+SELECT COUNT(DISTINCT user_id) AS count
+FROM promo_uses
+"""
+
+COUNT_PROMO_CODES = """
+SELECT COUNT(*) AS count
+FROM promo_codes
+"""
+
+COUNT_VIRTUAL_CHAT_USERS = """
+SELECT COUNT(DISTINCT CASE
+    WHEN user1_id < 0 THEN user2_id
+    ELSE user1_id
+END) AS count
+FROM pairs
+WHERE user1_id < 0 OR user2_id < 0
+"""
+
+COUNT_ACTIVE_VIRTUAL_CHATS = """
+SELECT COUNT(*) AS count
+FROM pairs
+WHERE is_active = 1 AND (user1_id < 0 OR user2_id < 0)
+"""
+
+COUNT_VIRTUAL_CHATS_FOR_USER = """
+SELECT COUNT(*) AS count
+FROM pairs
+WHERE (user1_id = ? AND user2_id < 0) OR (user2_id = ? AND user1_id < 0)
+"""
+
+SELECT_PAYMENT_INCIDENTS = """
+SELECT actor_id, payload, created_at
+FROM incidents
+WHERE type = 'payment'
+ORDER BY created_at DESC
+"""
+
 SELECT_ACTIVE_USERS = """
 SELECT user_id
 FROM users
@@ -284,9 +437,43 @@ ORDER BY user_id ASC
 """
 
 SELECT_ALL_USERS = """
-SELECT user_id
+SELECT *
 FROM users
-ORDER BY user_id ASC
+ORDER BY created_at DESC
+"""
+
+SEARCH_USERS = """
+SELECT *
+FROM users
+WHERE CAST(user_id AS TEXT) = ?
+   OR LOWER(username) = LOWER(?)
+   OR LOWER(username) LIKE LOWER(?)
+   OR LOWER(first_name) LIKE LOWER(?)
+   OR LOWER(last_name) LIKE LOWER(?)
+   OR LOWER(TRIM(first_name || ' ' || last_name)) LIKE LOWER(?)
+ORDER BY
+    CASE
+        WHEN CAST(user_id AS TEXT) = ? THEN 0
+        WHEN LOWER(username) = LOWER(?) THEN 1
+        ELSE 2
+    END,
+    last_seen_at DESC,
+    created_at DESC
+LIMIT ?
+"""
+
+SELECT_RECENT_INCIDENTS_FOR_USER = """
+SELECT id, actor_id, target_id, type, payload, created_at
+FROM incidents
+WHERE actor_id = ? OR target_id = ?
+ORDER BY created_at DESC
+LIMIT ?
+"""
+
+COUNT_INCIDENTS_FOR_USER = """
+SELECT COUNT(*) AS count
+FROM incidents
+WHERE actor_id = ? OR target_id = ?
 """
 
 SELECT_PARTNER_HISTORY = """

@@ -7,7 +7,12 @@ from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
 from ..keyboards.premium_menu import premium_keyboard
 from ..utils.admin import is_admin
-from ..utils.constants import PREMIUM_INFO_TEXT_EN, PREMIUM_INFO_TEXT_RU, STATE_CHATTING
+from ..utils.constants import (
+    PREMIUM_INFO_TEXT_EN,
+    PREMIUM_INFO_TEXT_RU,
+    PREMIUM_PRICE_BY_DAYS,
+    STATE_CHATTING,
+)
 from ..utils.i18n import button_variants, tr
 from ..utils.premium import add_premium_days
 from ..utils.users import ensure_user, get_state, is_banned
@@ -15,7 +20,7 @@ from ..utils.users import ensure_user, get_state, is_banned
 router = Router()
 
 STAR_CURRENCY = "XTR"
-PRICE_BY_DAYS = {7: 29, 30: 99, 90: 249}
+PRICE_BY_DAYS = PREMIUM_PRICE_BY_DAYS
 
 
 @router.message(F.text.in_(button_variants("premium")))
@@ -116,7 +121,12 @@ async def successful_payment(message: Message, db: Database) -> None:
     current_until = await db.get_premium_until(message.from_user.id)
     new_until = add_premium_days(current_until, days)
     await db.set_premium_until(message.from_user.id, new_until)
-    await db.add_incident(message.from_user.id, None, "payment", payload)
+    await db.add_incident(
+        message.from_user.id,
+        None,
+        "payment",
+        f"{payload}|{payment.total_amount}|{payment.currency}",
+    )
     lang = await db.get_lang(message.from_user.id)
 
     await message.answer(
@@ -229,21 +239,45 @@ async def promo_command(message: Message, db: Database, config: Config) -> None:
         return
 
     code = parts[1].strip().upper()
-    days = config.promo_codes.get(code)
-    if not days:
-        await message.answer(tr(lang, "Неверный промокод.", "Invalid promo code."))
-        return
+    managed_status, managed_days = "invalid", None
+    managed_promo = await db.get_managed_promo_code(code)
+    if managed_promo is not None:
+        managed_status, managed_days = await db.redeem_managed_promo_code(user_id, code)
+        if managed_status == "used":
+            await message.answer(
+                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.")
+            )
+            return
+        if managed_status in {"exhausted", "inactive"}:
+            await message.answer(
+                tr(
+                    lang,
+                    "Промокод больше недоступен.",
+                    "This promo code is no longer available.",
+                )
+            )
+            return
+        if managed_status == "ok":
+            days = managed_days
+        else:
+            days = None
+    else:
+        days = config.promo_codes.get(code)
+        if not days:
+            await message.answer(tr(lang, "Неверный промокод.", "Invalid promo code."))
+            return
 
-    if await db.has_used_promo(user_id, code):
-        await message.answer(
-            tr(lang, "Этот промокод уже использован.", "This promo code has already been used.")
-        )
-        return
+        if await db.has_used_promo(user_id, code):
+            await message.answer(
+                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.")
+            )
+            return
 
     current_until = await db.get_premium_until(user_id)
     new_until = add_premium_days(current_until, days)
     await db.set_premium_until(user_id, new_until)
-    await db.add_promo_use(user_id, code)
+    if managed_promo is None:
+        await db.add_promo_use(user_id, code)
     await db.add_incident(user_id, None, "promo", code)
 
     await message.answer(
