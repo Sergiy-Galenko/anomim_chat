@@ -6,15 +6,25 @@ from typing import Any
 from aiogram.methods import TelegramMethod
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
-from .bootstrap import get_app_context
+from .bootstrap import AppContext, get_app_context
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 
-@app.get("/")
-async def healthcheck() -> dict[str, Any]:
+async def _load_context() -> AppContext:
+    try:
+        return await get_app_context()
+    except RuntimeError as exc:
+        logger.exception("Vercel bot configuration is invalid")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to initialize bot context")
+        raise HTTPException(status_code=500, detail="Failed to initialize bot") from exc
+
+
+async def _healthcheck() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "ghostchat-bot",
@@ -22,17 +32,15 @@ async def healthcheck() -> dict[str, Any]:
     }
 
 
-@app.head("/")
-async def healthcheck_head() -> Response:
+async def _healthcheck_head() -> Response:
     return Response(status_code=200)
 
 
-@app.post("/")
-async def telegram_webhook(
+async def _telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    ctx = await get_app_context()
+    ctx = await _load_context()
 
     if ctx.config.telegram_webhook_secret and not secrets.compare_digest(
         x_telegram_bot_api_secret_token or "",
@@ -54,3 +62,39 @@ async def telegram_webhook(
         raise HTTPException(status_code=500, detail="Webhook processing failed") from exc
 
     return {"ok": True}
+
+
+@app.get("/")
+async def healthcheck_root() -> dict[str, Any]:
+    return await _healthcheck()
+
+
+@app.get("/api")
+async def healthcheck_api() -> dict[str, Any]:
+    return await _healthcheck()
+
+
+@app.head("/")
+async def healthcheck_head_root() -> Response:
+    return await _healthcheck_head()
+
+
+@app.head("/api")
+async def healthcheck_head_api() -> Response:
+    return await _healthcheck_head()
+
+
+@app.post("/")
+async def telegram_webhook_root(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    return await _telegram_webhook(request, x_telegram_bot_api_secret_token)
+
+
+@app.post("/api")
+async def telegram_webhook_api(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    return await _telegram_webhook(request, x_telegram_bot_api_secret_token)
