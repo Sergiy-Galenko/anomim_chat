@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS chat_feedback (
     created_at TEXT NOT NULL,
     UNIQUE(pair_id, rater_id)
 );
+
+CREATE TABLE IF NOT EXISTS media_archive (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 SELECT_USER = "SELECT * FROM users WHERE user_id = ?"
@@ -205,6 +215,30 @@ DELETE_PENDING_RATING = "DELETE FROM pending_ratings WHERE user_id = ?"
 INSERT_CHAT_FEEDBACK = """
 INSERT INTO chat_feedback (pair_id, rater_id, target_id, value, created_at)
 VALUES (?, ?, ?, ?, ?)
+"""
+
+INSERT_MEDIA_ARCHIVE = """
+INSERT INTO media_archive (sender_id, receiver_id, media_type, file_id, caption, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+DELETE_OLD_MEDIA_ARCHIVE = """
+DELETE FROM media_archive
+WHERE created_at < ?
+"""
+
+COUNT_RECENT_MEDIA_ARCHIVE = """
+SELECT COUNT(*) AS count
+FROM media_archive
+WHERE created_at >= ?
+"""
+
+SELECT_RECENT_MEDIA_ARCHIVE = """
+SELECT id, sender_id, receiver_id, media_type, file_id, caption, created_at
+FROM media_archive
+WHERE created_at >= ?
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?
 """
 
 SELECT_CHAT_FEEDBACK_EXISTS = """

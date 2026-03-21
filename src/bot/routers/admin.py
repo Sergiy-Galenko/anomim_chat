@@ -13,6 +13,7 @@ from ...db.database import Database
 from ..keyboards.admin_menu import (
     admin_cancel_keyboard,
     admin_confirm_keyboard,
+    admin_media_keyboard,
     admin_menu_keyboard,
     report_action_keyboard,
 )
@@ -29,6 +30,9 @@ from ..utils.premium import add_premium_days, is_premium_until
 from ..utils.users import format_until_text
 
 router = Router()
+
+MEDIA_RETENTION_DAYS = 3
+MEDIA_PAGE_SIZE = 5
 
 class AdminStates(StatesGroup):
     waiting_ban_id = State()
@@ -104,6 +108,97 @@ def _chunk_lines(lines: list[str], max_len: int = 3500) -> list[str]:
     if current:
         chunks.append("\n".join(current))
     return chunks
+
+
+def _short_text(value: str, max_len: int = 120) -> str:
+    normalized = " ".join((value or "").split())
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[: max_len - 1] + "…"
+
+
+def _media_type_label(media_type: str, lang: str) -> str:
+    if media_type == "video":
+        return tr(lang, "Видео", "Video")
+    return tr(lang, "Фото", "Photo")
+
+
+def _media_panel_text(
+    rows: list,
+    page: int,
+    total: int,
+    lang: str,
+) -> str:
+    total_pages = max((total + MEDIA_PAGE_SIZE - 1) // MEDIA_PAGE_SIZE, 1)
+    lines = [
+        tr(lang, "🖼 Медиа файлы", "🖼 Media Files"),
+        "----------------",
+        tr(
+            lang,
+            f"Храним фото и видео за последние {MEDIA_RETENTION_DAYS} дня.",
+            f"Photos and videos from the last {MEDIA_RETENTION_DAYS} days are stored here.",
+        ),
+        tr(
+            lang,
+            f"Записей: {total} | Страница {page + 1}/{total_pages}",
+            f"Records: {total} | Page {page + 1}/{total_pages}",
+        ),
+        "",
+    ]
+
+    if not rows:
+        lines.append(tr(lang, "Нет медиа за выбранный период.", "No media for the selected period."))
+        return "\n".join(lines)
+
+    for idx, row in enumerate(rows, start=1 + page * MEDIA_PAGE_SIZE):
+        caption = _short_text(row["caption"] or "—")
+        lines.append(
+            f"{idx}. {_media_type_label(row['media_type'], lang)} | "
+            f"{tr(lang, 'от', 'from')} {row['sender_id']} -> {row['receiver_id']} | "
+            f"{row['created_at']}"
+        )
+        lines.append(f"   {tr(lang, 'Подпись', 'Caption')}: {caption}")
+
+    lines.append("")
+    lines.append(
+        tr(
+            lang,
+            "Сами медиа отправлены ниже отдельными сообщениями.",
+            "The media files themselves are sent below as separate messages.",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _media_preview_caption(row, lang: str) -> str:
+    lines = [
+        f"🖼 {_media_type_label(row['media_type'], lang)}",
+        f"ID: {row['id']}",
+        f"{tr(lang, 'От', 'From')}: {row['sender_id']}",
+        f"{tr(lang, 'Кому', 'To')}: {row['receiver_id']}",
+        f"{tr(lang, 'Дата', 'Date')}: {row['created_at']}",
+    ]
+    if row["caption"]:
+        lines.append(f"{tr(lang, 'Подпись', 'Caption')}: {_short_text(row['caption'], 500)}")
+    caption = "\n".join(lines)
+    return caption[:900]
+
+
+async def _send_media_preview(callback: CallbackQuery, row, lang: str) -> None:
+    caption = _media_preview_caption(row, lang)
+    try:
+        if row["media_type"] == "video":
+            await callback.bot.send_video(callback.from_user.id, row["file_id"], caption=caption)
+        else:
+            await callback.bot.send_photo(callback.from_user.id, row["file_id"], caption=caption)
+    except Exception:
+        await callback.message.answer(
+            tr(
+                lang,
+                f"Не удалось открыть медиа ID {row['id']}. Возможно, файл больше недоступен в Telegram.",
+                f"Failed to open media ID {row['id']}. The file may no longer be available in Telegram.",
+            )
+        )
 
 
 @router.message(Command("admin"))
@@ -248,6 +343,55 @@ async def admin_export_stats(callback: CallbackQuery, db: Database, config: Conf
     content = buffer.getvalue().encode("utf-8")
     file = BufferedInputFile(content, filename="stats.csv")
     await callback.message.answer_document(file)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:media")
+@router.callback_query(F.data.startswith("admin:media:"))
+async def admin_media_archive(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    page = 0
+    if callback.data and callback.data.count(":") >= 2:
+        try:
+            page = max(0, int(callback.data.split(":")[2]))
+        except ValueError:
+            page = 0
+
+    total = await db.count_recent_media_records(MEDIA_RETENTION_DAYS)
+    if total == 0:
+        await safe_edit_message_text(
+            callback.message,
+            tr(
+                lang,
+                "🖼 Медиа файлы\n----------------\nЗа последние 3 дня фото и видео не найдены.",
+                "🖼 Media Files\n----------------\nNo photos or videos were found for the last 3 days.",
+            ),
+            reply_markup=admin_menu_keyboard(lang),
+        )
+        await callback.answer()
+        return
+
+    max_page = max((total - 1) // MEDIA_PAGE_SIZE, 0)
+    page = min(page, max_page)
+    rows = await db.get_recent_media_records(
+        retention_days=MEDIA_RETENTION_DAYS,
+        limit=MEDIA_PAGE_SIZE,
+        offset=page * MEDIA_PAGE_SIZE,
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        _media_panel_text(rows, page, total, lang),
+        reply_markup=admin_media_keyboard(page, page > 0, page < max_page, lang),
+    )
+
+    for row in rows:
+        await _send_media_preview(callback, row, lang)
+
     await callback.answer()
 
 

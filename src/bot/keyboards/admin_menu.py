@@ -7,6 +7,7 @@ def admin_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text=tr(lang, "📊 Статистика", "📊 Statistics"), callback_data="admin:stats")],
         [InlineKeyboardButton(text=tr(lang, "👥 Активные пользователи", "👥 Active Users"), callback_data="admin:active_users")],
+        [InlineKeyboardButton(text=tr(lang, "🖼 Медиа файлы", "🖼 Media Files"), callback_data="admin:media")],
         [InlineKeyboardButton(text=tr(lang, "🧾 Жалобы", "🧾 Reports"), callback_data="admin:reports")],
         [InlineKeyboardButton(text=tr(lang, "📥 Экспорт CSV", "📥 Export CSV"), callback_data="admin:export_stats")],
         [
@@ -50,3 +51,32 @@ def report_action_keyboard(report_id: int, lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=tr(lang, "➡️ Далее", "➡️ Next"), callback_data="admin:reports")],
         ]
     )
+
+
+def admin_media_keyboard(page: int, has_prev: bool, has_next: bool, lang: str) -> InlineKeyboardMarkup:
+    keyboard = []
+    nav_row = []
+    if has_prev:
+        nav_row.append(
+            InlineKeyboardButton(
+                text=tr(lang, "⬅️ Назад", "⬅️ Back"),
+                callback_data=f"admin:media:{page - 1}",
+            )
+        )
+    if has_next:
+        nav_row.append(
+            InlineKeyboardButton(
+                text=tr(lang, "➡️ Далее", "➡️ Next"),
+                callback_data=f"admin:media:{page + 1}",
+            )
+        )
+    if nav_row:
+        keyboard.append(nav_row)
+
+    keyboard.append(
+        [InlineKeyboardButton(text=tr(lang, "🔄 Обновить", "🔄 Refresh"), callback_data=f"admin:media:{page}")]
+    )
+    keyboard.append(
+        [InlineKeyboardButton(text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"), callback_data="admin:stats")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

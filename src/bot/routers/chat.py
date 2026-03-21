@@ -380,6 +380,13 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             await message.bot.send_photo(
                 partner_id, message.photo[-1].file_id, caption=caption
             )
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="photo",
+                file_id=message.photo[-1].file_id,
+                caption=message.caption or "",
+            )
         elif message.video:
             if content_filter_enabled and contains_blocked_content(message.caption or ""):
                 lang = await db.get_lang(user_id)
@@ -394,6 +401,13 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
                 return
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_video(partner_id, message.video.file_id, caption=caption)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="video",
+                file_id=message.video.file_id,
+                caption=message.caption or "",
+            )
         elif message.voice:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)

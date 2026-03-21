@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,6 +42,9 @@ class Database:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _days_ago(self, days: int) -> str:
+        return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     async def _ensure_columns(self) -> None:
         assert self._conn is not None
@@ -280,6 +283,44 @@ class Database:
                 raise
 
             return True, target_id
+
+    async def cleanup_media_archive(self, retention_days: int = 3) -> None:
+        await self.execute(queries.DELETE_OLD_MEDIA_ARCHIVE, (self._days_ago(retention_days),))
+
+    async def add_media_record(
+        self,
+        sender_id: int,
+        receiver_id: int,
+        media_type: str,
+        file_id: str,
+        caption: str = "",
+        retention_days: int = 3,
+    ) -> None:
+        await self.cleanup_media_archive(retention_days)
+        await self.execute(
+            queries.INSERT_MEDIA_ARCHIVE,
+            (sender_id, receiver_id, media_type, file_id, caption, self._now()),
+        )
+
+    async def count_recent_media_records(self, retention_days: int = 3) -> int:
+        await self.cleanup_media_archive(retention_days)
+        row = await self.fetchone(
+            queries.COUNT_RECENT_MEDIA_ARCHIVE,
+            (self._days_ago(retention_days),),
+        )
+        return int(row["count"]) if row else 0
+
+    async def get_recent_media_records(
+        self,
+        retention_days: int = 3,
+        limit: int = 5,
+        offset: int = 0,
+    ) -> list[aiosqlite.Row]:
+        await self.cleanup_media_archive(retention_days)
+        return await self.fetchall(
+            queries.SELECT_RECENT_MEDIA_ARCHIVE,
+            (self._days_ago(retention_days), limit, offset),
+        )
 
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)
