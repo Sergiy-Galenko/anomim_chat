@@ -44,7 +44,6 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
     premium_until_text = format_premium_until(premium_until) if premium_active else "—"
     banned_until, muted_until = await get_active_restrictions(db, user_id)
     auto_search = await db.get_auto_search(user_id)
-    content_filter = await db.get_content_filter(user_id)
     language_text = "Русский" if lang == "ru" else "English"
 
     text = tr(
@@ -61,7 +60,6 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
             f"Временный бан до: {format_until_text(banned_until) if banned_until else '—'}\n"
             f"Мут до: {format_until_text(muted_until) if muted_until else '—'}\n"
             f"Автопоиск: {yes_no(lang, auto_search)}\n"
-            f"Фильтр контента: {yes_no(lang, content_filter)}\n"
             f"Язык: {language_text}"
         ),
         (
@@ -76,7 +74,6 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
             f"Temp ban until: {format_until_text(banned_until) if banned_until else '—'}\n"
             f"Mute until: {format_until_text(muted_until) if muted_until else '—'}\n"
             f"Auto-search: {yes_no(lang, auto_search)}\n"
-            f"Content filter: {yes_no(lang, content_filter)}\n"
             f"Language: {language_text}"
         ),
     )
@@ -107,10 +104,9 @@ async def settings(message: Message, db: Database, config: Config) -> None:
         return
 
     auto_search = await db.get_auto_search(user_id)
-    content_filter = await db.get_content_filter(user_id)
     await message.answer(
-        _settings_text(lang, auto_search, content_filter),
-        reply_markup=settings_keyboard(auto_search, content_filter, lang),
+        _settings_text(lang, auto_search),
+        reply_markup=settings_keyboard(auto_search, lang),
     )
 
 
@@ -130,10 +126,16 @@ async def toggle_content_filter(callback: CallbackQuery, db: Database) -> None:
     user_id = callback.from_user.id
     await ensure_user(db, user_id)
 
-    current = await db.get_content_filter(user_id)
-    await db.set_content_filter(user_id, not current)
+    lang = await db.get_lang(user_id)
     await _refresh_settings(callback, db, user_id)
-    await callback.answer()
+    await callback.answer(
+        tr(
+            lang,
+            "Фильтр контента отключен для всех пользователей.",
+            "Content filtering is disabled for all users.",
+        ),
+        show_alert=True,
+    )
 
 
 @router.callback_query(F.data.startswith("settings:lang:"))
@@ -206,27 +208,24 @@ async def _refresh_settings(callback: CallbackQuery, db: Database, user_id: int)
     if not callback.message:
         return
     auto_search = await db.get_auto_search(user_id)
-    content_filter = await db.get_content_filter(user_id)
     lang = await db.get_lang(user_id)
     await safe_edit_message_text(callback.message,
-        _settings_text(lang, auto_search, content_filter),
-        reply_markup=settings_keyboard(auto_search, content_filter, lang),
+        _settings_text(lang, auto_search),
+        reply_markup=settings_keyboard(auto_search, lang),
     )
 
 
-def _settings_text(lang: str, auto_search: bool, content_filter: bool) -> str:
+def _settings_text(lang: str, auto_search: bool) -> str:
     return tr(
         lang,
         (
             "⚙️ Настройки\n"
             f"Автопоиск после диалога: {yes_no(lang, auto_search)}\n"
-            f"Фильтр контента: {yes_no(lang, content_filter)}\n"
             f"Язык: {'Русский' if lang == 'ru' else 'English'}"
         ),
         (
             "⚙️ Settings\n"
             f"Auto-search after chat: {yes_no(lang, auto_search)}\n"
-            f"Content filter: {yes_no(lang, content_filter)}\n"
             f"Language: {'Russian' if lang == 'ru' else 'English'}"
         ),
     )

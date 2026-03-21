@@ -13,6 +13,7 @@ from ...db.database import Database
 from ..keyboards.admin_menu import (
     admin_cancel_keyboard,
     admin_confirm_keyboard,
+    admin_media_item_keyboard,
     admin_media_keyboard,
     admin_menu_keyboard,
     report_action_keyboard,
@@ -92,6 +93,16 @@ def _display_name(chat, lang: str) -> str:
     return name if name else tr(lang, "Без имени", "No name")
 
 
+def _identity_text(chat, lang: str) -> str:
+    username = f"@{chat.username}" if getattr(chat, "username", None) else "—"
+    name_parts = [chat.first_name or "", chat.last_name or ""]
+    full_name = " ".join([p for p in name_parts if p]).strip() or tr(lang, "Без имени", "No name")
+    return (
+        f"{tr(lang, 'Ник', 'Username')}: {username} | "
+        f"{tr(lang, 'Имя', 'Name')}: {full_name}"
+    )
+
+
 def _chunk_lines(lines: list[str], max_len: int = 3500) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
@@ -118,9 +129,17 @@ def _short_text(value: str, max_len: int = 120) -> str:
 
 
 def _media_type_label(media_type: str, lang: str) -> str:
-    if media_type == "video":
-        return tr(lang, "Видео", "Video")
-    return tr(lang, "Фото", "Photo")
+    labels = {
+        "photo": tr(lang, "Фото", "Photo"),
+        "video": tr(lang, "Видео", "Video"),
+        "voice": tr(lang, "Голосовое", "Voice"),
+        "video_note": tr(lang, "Кружок", "Video note"),
+        "sticker": tr(lang, "Стикер", "Sticker"),
+        "document": tr(lang, "Документ", "Document"),
+        "audio": tr(lang, "Аудио", "Audio"),
+        "animation": tr(lang, "GIF/анимация", "GIF/animation"),
+    }
+    return labels.get(media_type, media_type)
 
 
 def _media_panel_text(
@@ -135,8 +154,8 @@ def _media_panel_text(
         "----------------",
         tr(
             lang,
-            f"Храним фото и видео за последние {MEDIA_RETENTION_DAYS} дня.",
-            f"Photos and videos from the last {MEDIA_RETENTION_DAYS} days are stored here.",
+            f"Храним медиа из переписок за последние {MEDIA_RETENTION_DAYS} дня.",
+            f"Chat media from the last {MEDIA_RETENTION_DAYS} days is stored here.",
         ),
         tr(
             lang,
@@ -186,11 +205,64 @@ def _media_preview_caption(row, lang: str) -> str:
 
 async def _send_media_preview(callback: CallbackQuery, row, lang: str) -> None:
     caption = _media_preview_caption(row, lang)
+    reply_markup = admin_media_item_keyboard(int(row["id"]), lang)
     try:
         if row["media_type"] == "video":
-            await callback.bot.send_video(callback.from_user.id, row["file_id"], caption=caption)
+            await callback.bot.send_video(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "voice":
+            await callback.bot.send_voice(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "video_note":
+            await callback.bot.send_message(callback.from_user.id, caption)
+            await callback.bot.send_video_note(
+                callback.from_user.id,
+                row["file_id"],
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "sticker":
+            await callback.bot.send_message(callback.from_user.id, caption)
+            await callback.bot.send_sticker(
+                callback.from_user.id,
+                row["file_id"],
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "document":
+            await callback.bot.send_document(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "audio":
+            await callback.bot.send_audio(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
+        elif row["media_type"] == "animation":
+            await callback.bot.send_animation(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
         else:
-            await callback.bot.send_photo(callback.from_user.id, row["file_id"], caption=caption)
+            await callback.bot.send_photo(
+                callback.from_user.id,
+                row["file_id"],
+                caption=caption,
+                reply_markup=reply_markup,
+            )
     except Exception:
         await callback.message.answer(
             tr(
@@ -367,8 +439,8 @@ async def admin_media_archive(callback: CallbackQuery, db: Database, config: Con
             callback.message,
             tr(
                 lang,
-                "🖼 Медиа файлы\n----------------\nЗа последние 3 дня фото и видео не найдены.",
-                "🖼 Media Files\n----------------\nNo photos or videos were found for the last 3 days.",
+                "🖼 Медиа файлы\n----------------\nЗа последние 3 дня медиа не найдены.",
+                "🖼 Media Files\n----------------\nNo media was found for the last 3 days.",
             ),
             reply_markup=admin_menu_keyboard(lang),
         )
@@ -393,6 +465,33 @@ async def admin_media_archive(callback: CallbackQuery, db: Database, config: Con
         await _send_media_preview(callback, row, lang)
 
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:media_delete:"))
+async def admin_media_delete(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    try:
+        media_id = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer(tr(lang, "Неверный ID.", "Invalid ID."), show_alert=True)
+        return
+
+    row = await db.get_media_record_by_id(media_id)
+    if not row:
+        await callback.answer(
+            tr(lang, "Запись уже удалена.", "The record has already been deleted."),
+            show_alert=True,
+        )
+        return
+
+    await db.delete_media_record(media_id)
+    if callback.message:
+        await safe_edit_message_reply_markup(callback.message, reply_markup=None)
+    await callback.answer(tr(lang, "Медиа удалено из архива.", "Media removed from archive."), show_alert=True)
 
 
 @router.callback_query(F.data == "admin:reports")
@@ -551,8 +650,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
     for idx, user_id in enumerate(user_ids, start=1):
         try:
             chat = await callback.bot.get_chat(user_id)
-            name = _display_name(chat, lang)
-            lines.append(f"{idx}. {name} — {user_id}")
+            lines.append(f"{idx}. {_identity_text(chat, lang)} | ID: {user_id}")
         except Exception:
             lines.append(f"{idx}. {user_id} — {tr(lang, 'недоступен', 'unavailable')}")
 

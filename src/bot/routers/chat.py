@@ -16,7 +16,6 @@ from ..utils.chat import (
     safe_send_message,
 )
 from ..utils.constants import SKIP_COOLDOWN_SECONDS, STATE_CHATTING, STATE_IDLE, STATE_SEARCHING
-from ..utils.content_filter import contains_blocked_content
 from ..utils.i18n import any_button, tr
 from ..utils.admin import is_admin
 from ..utils.users import ensure_user, format_until_text, get_active_restrictions, get_state, is_banned, is_muted
@@ -347,35 +346,11 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
     show_sender = is_admin(partner_id, config)
     partner_lang = await db.get_lang(partner_id)
     tag = _sender_tag(message, partner_lang) if show_sender else ""
-    content_filter_enabled = await db.get_content_filter(user_id)
-
     try:
         if message.text:
-            if content_filter_enabled and contains_blocked_content(message.text):
-                lang = await db.get_lang(user_id)
-                await message.answer(
-                    tr(
-                        lang,
-                        "Сообщение не отправлено: сработал фильтр контента.",
-                        "Message blocked by content filter.",
-                    )
-                )
-                await db.add_incident(user_id, partner_id, "content_block", "text")
-                return
             text = f"{tag}\n{message.text}" if show_sender else message.text
             await message.bot.send_message(partner_id, text)
         elif message.photo:
-            if content_filter_enabled and contains_blocked_content(message.caption or ""):
-                lang = await db.get_lang(user_id)
-                await message.answer(
-                    tr(
-                        lang,
-                        "Подпись к фото заблокирована фильтром контента.",
-                        "Photo caption blocked by content filter.",
-                    )
-                )
-                await db.add_incident(user_id, partner_id, "content_block", "photo_caption")
-                return
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_photo(
                 partner_id, message.photo[-1].file_id, caption=caption
@@ -388,17 +363,6 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
                 caption=message.caption or "",
             )
         elif message.video:
-            if content_filter_enabled and contains_blocked_content(message.caption or ""):
-                lang = await db.get_lang(user_id)
-                await message.answer(
-                    tr(
-                        lang,
-                        "Подпись к видео заблокирована фильтром контента.",
-                        "Video caption blocked by content filter.",
-                    )
-                )
-                await db.add_incident(user_id, partner_id, "content_block", "video_caption")
-                return
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_video(partner_id, message.video.file_id, caption=caption)
             await db.add_media_record(
@@ -408,33 +372,67 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
                 file_id=message.video.file_id,
                 caption=message.caption or "",
             )
+        elif message.animation:
+            caption = _merge_caption(tag, message.caption) if show_sender else message.caption
+            await message.bot.send_animation(partner_id, message.animation.file_id, caption=caption)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="animation",
+                file_id=message.animation.file_id,
+                caption=message.caption or "",
+            )
+        elif message.audio:
+            caption = _merge_caption(tag, message.caption) if show_sender else message.caption
+            await message.bot.send_audio(partner_id, message.audio.file_id, caption=caption)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="audio",
+                file_id=message.audio.file_id,
+                caption=message.caption or "",
+            )
         elif message.voice:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_voice(partner_id, message.voice.file_id)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="voice",
+                file_id=message.voice.file_id,
+            )
         elif message.video_note:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_video_note(partner_id, message.video_note.file_id)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="video_note",
+                file_id=message.video_note.file_id,
+            )
         elif message.sticker:
             if show_sender:
                 await message.bot.send_message(partner_id, tag)
             await message.bot.send_sticker(partner_id, message.sticker.file_id)
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="sticker",
+                file_id=message.sticker.file_id,
+            )
         elif message.document:
-            if content_filter_enabled and contains_blocked_content(message.caption or ""):
-                lang = await db.get_lang(user_id)
-                await message.answer(
-                    tr(
-                        lang,
-                        "Подпись к документу заблокирована фильтром контента.",
-                        "Document caption blocked by content filter.",
-                    )
-                )
-                await db.add_incident(user_id, partner_id, "content_block", "document_caption")
-                return
             caption = _merge_caption(tag, message.caption) if show_sender else message.caption
             await message.bot.send_document(
                 partner_id, message.document.file_id, caption=caption
+            )
+            await db.add_media_record(
+                sender_id=user_id,
+                receiver_id=partner_id,
+                media_type="document",
+                file_id=message.document.file_id,
+                caption=message.caption or "",
             )
         else:
             await message.bot.send_message(

@@ -80,3 +80,16 @@ def admin_media_keyboard(page: int, has_prev: bool, has_next: bool, lang: str) -
         [InlineKeyboardButton(text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"), callback_data="admin:stats")]
     )
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def admin_media_item_keyboard(media_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "🗑 Удалить", "🗑 Delete"),
+                    callback_data=f"admin:media_delete:{media_id}",
+                )
+            ]
+        ]
+    )

@@ -322,6 +322,12 @@ class Database:
             (self._days_ago(retention_days), limit, offset),
         )
 
+    async def get_media_record_by_id(self, media_id: int) -> Optional[aiosqlite.Row]:
+        return await self.fetchone(queries.SELECT_MEDIA_ARCHIVE_BY_ID, (media_id,))
+
+    async def delete_media_record(self, media_id: int) -> None:
+        await self.execute(queries.DELETE_MEDIA_ARCHIVE_BY_ID, (media_id,))
+
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)
         active_chats = await self.fetchone(queries.STATS_ACTIVE_CHATS)

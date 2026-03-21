@@ -241,6 +241,18 @@ ORDER BY created_at DESC
 LIMIT ? OFFSET ?
 """
 
+SELECT_MEDIA_ARCHIVE_BY_ID = """
+SELECT id, sender_id, receiver_id, media_type, file_id, caption, created_at
+FROM media_archive
+WHERE id = ?
+LIMIT 1
+"""
+
+DELETE_MEDIA_ARCHIVE_BY_ID = """
+DELETE FROM media_archive
+WHERE id = ?
+"""
+
 SELECT_CHAT_FEEDBACK_EXISTS = """
 SELECT id
 FROM chat_feedback
