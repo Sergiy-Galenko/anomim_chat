@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import secrets
@@ -18,6 +19,8 @@ from aiogram.types import (
 from ...config import Config
 from ...db.database import Database
 from ..keyboards.admin_menu import (
+    admin_bot_settings_keyboard,
+    admin_broadcasts_keyboard,
     admin_cancel_keyboard,
     admin_confirm_keyboard,
     admin_media_item_keyboard,
@@ -42,6 +45,7 @@ from ..utils.constants import (
 from ..utils.i18n import button_variants, tr
 from ..utils.premium import add_premium_days
 from ..utils.users import format_until_text
+from ..utils.virtual_companions import VIRTUAL_COMPANIONS
 
 router = Router()
 
@@ -49,6 +53,7 @@ MEDIA_RETENTION_DAYS = 3
 MEDIA_PAGE_SIZE = 5
 USER_SEARCH_LIMIT = 8
 PROMO_LIST_LIMIT = 8
+BROADCAST_LIST_LIMIT = 6
 
 class AdminStates(StatesGroup):
     waiting_ban_id = State()
@@ -58,6 +63,9 @@ class AdminStates(StatesGroup):
     waiting_search_query = State()
     waiting_promo_days = State()
     waiting_promo_limit = State()
+    waiting_broadcast_text = State()
+    waiting_bot_count = State()
+    waiting_bot_threshold = State()
 
 
 def _is_admin(user_id: int, config: Config) -> bool:
@@ -94,6 +102,14 @@ def _parse_positive_int(text: str) -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+def _parse_non_negative_int(text: str) -> int | None:
+    try:
+        value = int(text.strip())
+    except ValueError:
+        return None
+    return value if value >= 0 else None
 
 
 def _percent(part: int, total: int) -> str:
@@ -162,6 +178,16 @@ def _stored_identity_text(row, lang: str) -> str:
     )
 
 
+def _needs_profile_refresh(row) -> bool:
+    return not any(
+        (
+            (row["username"] or "").strip(),
+            (row["first_name"] or "").strip(),
+            (row["last_name"] or "").strip(),
+        )
+    )
+
+
 def _chunk_lines(lines: list[str], max_len: int = 3500) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
@@ -185,6 +211,15 @@ def _short_text(value: str, max_len: int = 120) -> str:
     if len(normalized) <= max_len:
         return normalized
     return normalized[: max_len - 1] + "…"
+
+
+def _broadcast_audience_label(audience: str, lang: str) -> str:
+    labels = {
+        "news": tr(lang, "📰 Новости всем", "📰 News to all"),
+        "promo": tr(lang, "🔥 Промо без premium", "🔥 Promo to non-premium"),
+        "inactive": tr(lang, "♻️ Возврат неактивных 3д+", "♻️ Re-engage inactive 3d+"),
+    }
+    return labels.get(audience, audience)
 
 
 def _status_label(row, lang: str) -> str:
@@ -245,6 +280,83 @@ def _promo_panel_text(rows, lang: str) -> str:
             f"{row['code']} | {row['days']}d | "
             f"{row['used_count']}/{row['usage_limit']} | {status}"
         )
+    return "\n".join(lines)
+
+
+def _broadcast_panel_text(rows, lang: str) -> str:
+    lines = [
+        tr(lang, "📣 Рассылка", "📣 Broadcast"),
+        "----------------",
+        tr(
+            lang,
+            "Выберите тип рассылки: новости, промо или возврат неактивных пользователей.",
+            "Choose a broadcast type: news, promo, or re-engagement for inactive users.",
+        ),
+        tr(
+            lang,
+            "После выбора бот попросит текст и отправит его выбранной аудитории.",
+            "After choosing, the bot will ask for text and send it to the selected audience.",
+        ),
+        "",
+        tr(lang, "Последние рассылки:", "Recent broadcasts:"),
+    ]
+
+    if not rows:
+        lines.append(tr(lang, "Пока нет ни одной рассылки.", "No broadcasts yet."))
+        return "\n".join(lines)
+
+    for row in rows:
+        lines.append(
+            f"#{row['id']} | {_broadcast_audience_label(row['audience'], lang)} | "
+            f"{row['sent_count']}/{int(row['sent_count']) + int(row['failed_count'])} | "
+            f"{row['created_at']}"
+        )
+        lines.append(f"   {_short_text(row['message'] or '', 90)}")
+    return "\n".join(lines)
+
+
+def _bot_settings_text(settings: dict[str, int | list[int]], lang: str) -> str:
+    enabled_count = int(settings["enabled_count"])
+    queue_threshold = int(settings["queue_threshold"])
+    active_ids = set(settings["active_ids"])
+    available_ids = set(settings["available_ids"])
+
+    lines = [
+        tr(lang, "🤖 Настройки виртуальных ботов", "🤖 Virtual Bot Settings"),
+        "----------------",
+        f"{tr(lang, 'Профилей в матчах', 'Profiles in rotation')}: {enabled_count}",
+        f"{tr(lang, 'Порог очереди людей', 'Human queue threshold')}: {queue_threshold}",
+        tr(
+            lang,
+            "Когда людей в очереди больше порога, подключаются только живые собеседники.",
+            "When the queue is above the threshold, only human partners are matched.",
+        ),
+        "",
+        tr(lang, "Профили и стили:", "Profiles and styles:"),
+    ]
+
+    for companion_id in sorted(VIRTUAL_COMPANIONS, key=lambda value: abs(value)):
+        companion = VIRTUAL_COMPANIONS[companion_id]
+        status = (
+            tr(lang, "в ротации", "in rotation")
+            if companion_id in available_ids
+            else tr(lang, "активен, но вне лимита", "active, but outside limit")
+            if companion_id in active_ids
+            else tr(lang, "выключен", "disabled")
+        )
+        label = companion.admin_label_ru if lang == "ru" else companion.admin_label_en
+        style = companion.admin_style_ru if lang == "ru" else companion.admin_style_en
+        lines.append(f"{abs(companion_id) - 100}. {label} | {status}")
+        lines.append(f"   {style}")
+
+    lines.append("")
+    lines.append(
+        tr(
+            lang,
+            "Кнопки ниже меняют лимит профилей, порог онлайна и включают/выключают стили.",
+            "Use the buttons below to change the profile limit, queue threshold, and enabled styles.",
+        )
+    )
     return "\n".join(lines)
 
 
@@ -314,6 +426,29 @@ async def _render_user_card(message_obj, db: Database, user_id: int, lang: str) 
         _user_card_text(row, incidents_count, virtual_chats, lang),
         reply_markup=admin_user_card_keyboard(user_id, bool(row["is_banned"]), lang),
     )
+
+
+async def _refresh_missing_profiles(bot, db: Database, rows) -> list:
+    refreshed_rows = []
+    for row in rows:
+        if _needs_profile_refresh(row):
+            try:
+                chat = await bot.get_chat(int(row["user_id"]))
+            except Exception:
+                refreshed_rows.append(row)
+                continue
+
+            await db.update_user_profile(
+                user_id=int(row["user_id"]),
+                username=getattr(chat, "username", "") or "",
+                first_name=getattr(chat, "first_name", "") or "",
+                last_name=getattr(chat, "last_name", "") or "",
+            )
+            updated_row = await db.get_user(int(row["user_id"]))
+            refreshed_rows.append(updated_row or row)
+        else:
+            refreshed_rows.append(row)
+    return refreshed_rows
 
 
 def _generate_promo_code() -> str:
@@ -1127,6 +1262,272 @@ async def admin_promo_limit_input(
     )
 
 
+@router.callback_query(F.data == "admin:broadcasts")
+async def admin_broadcasts(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    rows = await db.get_recent_broadcasts(BROADCAST_LIST_LIMIT)
+    await safe_edit_message_text(
+        callback.message,
+        _broadcast_panel_text(rows, lang),
+        reply_markup=admin_broadcasts_keyboard(lang),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:broadcast:"))
+async def admin_broadcast_start(
+    callback: CallbackQuery, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    audience = (callback.data or "").split(":")[-1]
+    if audience not in {"news", "promo", "inactive"}:
+        await callback.answer(tr(lang, "Неизвестный тип рассылки.", "Unknown broadcast type."), show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_broadcast_text)
+    await state.update_data(broadcast_audience=audience)
+    await callback.message.answer(
+        tr(
+            lang,
+            f"Введите текст для рассылки: {_broadcast_audience_label(audience, lang)}",
+            f"Enter text for {_broadcast_audience_label(audience, lang)}",
+        ),
+        reply_markup=admin_cancel_keyboard(lang),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_broadcast_text)
+async def admin_broadcast_text_input(
+    message: Message, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(message.from_user.id)
+    if not _is_admin(message.from_user.id, config):
+        await message.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."))
+        return
+
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(tr(lang, "Введите текст рассылки.", "Enter broadcast text."))
+        return
+
+    data = await state.get_data()
+    audience = data.get("broadcast_audience")
+    if audience not in {"news", "promo", "inactive"}:
+        await state.clear()
+        await message.answer(
+            tr(lang, "Не удалось определить аудиторию.", "Failed to determine the audience."),
+            reply_markup=admin_menu_keyboard(lang),
+        )
+        return
+
+    user_ids = await db.get_broadcast_user_ids(audience)
+    sent_count = 0
+    failed_count = 0
+    for index, user_id in enumerate(user_ids, start=1):
+        if await safe_send_message(message.bot, user_id, text):
+            sent_count += 1
+        else:
+            failed_count += 1
+        if index % 25 == 0:
+            await asyncio.sleep(0.05)
+
+    await db.add_broadcast_log(
+        audience=audience,
+        message=text,
+        sent_count=sent_count,
+        failed_count=failed_count,
+        created_by=message.from_user.id,
+    )
+    await db.add_incident(
+        message.from_user.id,
+        None,
+        "broadcast",
+        f"{audience}|{sent_count}|{failed_count}",
+    )
+    await state.clear()
+    await message.answer(
+        tr(
+            lang,
+            f"📣 Рассылка завершена\nТип: {_broadcast_audience_label(audience, lang)}\nОтправлено: {sent_count}\nОшибок: {failed_count}",
+            f"📣 Broadcast completed\nType: {_broadcast_audience_label(audience, lang)}\nSent: {sent_count}\nFailed: {failed_count}",
+        ),
+        reply_markup=admin_broadcasts_keyboard(lang),
+    )
+
+
+@router.callback_query(F.data == "admin:bot_settings")
+async def admin_bot_settings(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    settings = await db.get_virtual_bot_settings()
+    await safe_edit_message_text(
+        callback.message,
+        _bot_settings_text(settings, lang),
+        reply_markup=admin_bot_settings_keyboard(
+            list(settings["active_ids"]),
+            list(settings["available_ids"]),
+            lang,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:bot_count")
+async def admin_bot_count_start(
+    callback: CallbackQuery, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_bot_count)
+    await callback.message.answer(
+        tr(
+            lang,
+            f"Введите, сколько профилей ботов держать в ротации: 0-{len(VIRTUAL_COMPANIONS)}.",
+            f"Enter how many bot profiles to keep in rotation: 0-{len(VIRTUAL_COMPANIONS)}.",
+        ),
+        reply_markup=admin_cancel_keyboard(lang),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_bot_count)
+async def admin_bot_count_input(
+    message: Message, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(message.from_user.id)
+    if not _is_admin(message.from_user.id, config):
+        await message.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."))
+        return
+
+    count = _parse_non_negative_int(message.text or "")
+    if count is None or count > len(VIRTUAL_COMPANIONS):
+        await message.answer(
+            tr(
+                lang,
+                f"Введите число от 0 до {len(VIRTUAL_COMPANIONS)}.",
+                f"Enter a number from 0 to {len(VIRTUAL_COMPANIONS)}.",
+            )
+        )
+        return
+
+    await db.set_virtual_bot_enabled_count(count)
+    await db.add_incident(message.from_user.id, None, "bot_settings_count", str(count))
+    await state.clear()
+    settings = await db.get_virtual_bot_settings()
+    await message.answer(
+        _bot_settings_text(settings, lang),
+        reply_markup=admin_bot_settings_keyboard(
+            list(settings["active_ids"]),
+            list(settings["available_ids"]),
+            lang,
+        ),
+    )
+
+
+@router.callback_query(F.data == "admin:bot_threshold")
+async def admin_bot_threshold_start(
+    callback: CallbackQuery, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_bot_threshold)
+    await callback.message.answer(
+        tr(
+            lang,
+            "Введите порог людей в очереди. Если людей больше этого числа, ботов не подключаем.",
+            "Enter the human queue threshold. If the queue exceeds this number, virtual bots stay off.",
+        ),
+        reply_markup=admin_cancel_keyboard(lang),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_bot_threshold)
+async def admin_bot_threshold_input(
+    message: Message, db: Database, state: FSMContext, config: Config
+) -> None:
+    lang = await db.get_lang(message.from_user.id)
+    if not _is_admin(message.from_user.id, config):
+        await message.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."))
+        return
+
+    threshold = _parse_non_negative_int(message.text or "")
+    if threshold is None:
+        await message.answer(tr(lang, "Введите число 0 или больше.", "Enter a number 0 or greater."))
+        return
+
+    await db.set_virtual_bot_queue_threshold(threshold)
+    await db.add_incident(message.from_user.id, None, "bot_settings_threshold", str(threshold))
+    await state.clear()
+    settings = await db.get_virtual_bot_settings()
+    await message.answer(
+        _bot_settings_text(settings, lang),
+        reply_markup=admin_bot_settings_keyboard(
+            list(settings["active_ids"]),
+            list(settings["available_ids"]),
+            lang,
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:bot_toggle:"))
+async def admin_bot_toggle(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    try:
+        companion_id = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer(tr(lang, "Неверный профиль.", "Invalid profile."), show_alert=True)
+        return
+
+    if companion_id not in VIRTUAL_COMPANIONS:
+        await callback.answer(tr(lang, "Профиль не найден.", "Profile not found."), show_alert=True)
+        return
+
+    settings = await db.get_virtual_bot_settings()
+    active_ids = list(settings["active_ids"])
+    if companion_id in active_ids:
+        active_ids = [item for item in active_ids if item != companion_id]
+    else:
+        active_ids.append(companion_id)
+        active_ids = sorted(set(active_ids))
+
+    await db.set_virtual_bot_active_ids(active_ids)
+    await db.add_incident(callback.from_user.id, None, "bot_settings_toggle", str(companion_id))
+    settings = await db.get_virtual_bot_settings()
+    await safe_edit_message_text(
+        callback.message,
+        _bot_settings_text(settings, lang),
+        reply_markup=admin_bot_settings_keyboard(
+            list(settings["active_ids"]),
+            list(settings["available_ids"]),
+            lang,
+        ),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin:active_users")
 async def admin_active_users(callback: CallbackQuery, db: Database, config: Config) -> None:
     lang = await db.get_lang(callback.from_user.id)
@@ -1135,6 +1536,7 @@ async def admin_active_users(callback: CallbackQuery, db: Database, config: Conf
         return
 
     rows = await db.get_all_users()
+    rows = await _refresh_missing_profiles(callback.bot, db, rows)
     total = len(rows)
 
     if total == 0:

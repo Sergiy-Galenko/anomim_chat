@@ -793,13 +793,33 @@ def is_virtual_companion(user_id: int | None) -> bool:
     return user_id in VIRTUAL_COMPANIONS if user_id is not None else False
 
 
-def pick_virtual_companion(user_id: int, partner_history: set[int]) -> int:
+def available_virtual_companion_ids(
+    active_ids: list[int] | None = None,
+    enabled_count: int | None = None,
+) -> list[int]:
+    pool_source = active_ids if active_ids is not None else sorted(VIRTUAL_COMPANIONS)
+    pool = [companion_id for companion_id in pool_source if companion_id in VIRTUAL_COMPANIONS]
+    if enabled_count is None:
+        return pool
+    return pool[: max(0, enabled_count)]
+
+
+def pick_virtual_companion(
+    user_id: int,
+    partner_history: set[int],
+    allowed_ids: list[int] | None = None,
+) -> int | None:
+    base_pool = allowed_ids if allowed_ids is not None else sorted(VIRTUAL_COMPANIONS)
+    normalized_pool = [companion_id for companion_id in base_pool if companion_id in VIRTUAL_COMPANIONS]
+    if not normalized_pool:
+        return None
+
     available = [
         companion_id
-        for companion_id in sorted(VIRTUAL_COMPANIONS)
+        for companion_id in normalized_pool
         if companion_id not in partner_history
     ]
-    pool = available or sorted(VIRTUAL_COMPANIONS)
+    pool = available or normalized_pool
     return pool[abs(user_id) % len(pool)]
 
 

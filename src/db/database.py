@@ -7,6 +7,9 @@ import aiosqlite
 
 from . import queries
 
+DEFAULT_VIRTUAL_COMPANION_IDS = (-101, -102, -103, -104, -105)
+DEFAULT_VIRTUAL_QUEUE_THRESHOLD = 4
+
 
 class Database:
     def __init__(self, db_path: str) -> None:
@@ -284,6 +287,80 @@ class Database:
     async def get_recent_promo_codes(self, limit: int = 10) -> list[aiosqlite.Row]:
         return await self.fetchall(queries.SELECT_RECENT_PROMO_CODES, (limit,))
 
+    async def get_setting(self, key: str, default: str = "") -> str:
+        row = await self.fetchone(queries.SELECT_APP_SETTING, (key,))
+        return row["value"] if row else default
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self.execute(queries.UPSERT_APP_SETTING, (key, value))
+
+    async def get_virtual_bot_settings(self) -> dict[str, int | list[int]]:
+        default_ids = list(DEFAULT_VIRTUAL_COMPANION_IDS)
+        raw_count = await self.get_setting(
+            "virtual_bots_enabled_count",
+            str(len(default_ids)),
+        )
+        raw_threshold = await self.get_setting(
+            "virtual_bots_queue_threshold",
+            str(DEFAULT_VIRTUAL_QUEUE_THRESHOLD),
+        )
+        raw_ids = await self.get_setting(
+            "virtual_bots_active_ids",
+            ",".join(str(companion_id) for companion_id in default_ids),
+        )
+
+        try:
+            enabled_count = int(raw_count)
+        except ValueError:
+            enabled_count = len(default_ids)
+        enabled_count = max(0, min(enabled_count, len(default_ids)))
+
+        try:
+            queue_threshold = int(raw_threshold)
+        except ValueError:
+            queue_threshold = DEFAULT_VIRTUAL_QUEUE_THRESHOLD
+        queue_threshold = max(0, queue_threshold)
+
+        active_ids: list[int] = []
+        for chunk in raw_ids.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            try:
+                companion_id = int(chunk)
+            except ValueError:
+                continue
+            if companion_id in DEFAULT_VIRTUAL_COMPANION_IDS and companion_id not in active_ids:
+                active_ids.append(companion_id)
+
+        if not active_ids and raw_ids.strip():
+            active_ids = default_ids
+
+        available_ids = active_ids[:enabled_count]
+        return {
+            "enabled_count": enabled_count,
+            "queue_threshold": queue_threshold,
+            "active_ids": active_ids,
+            "available_ids": available_ids,
+        }
+
+    async def set_virtual_bot_enabled_count(self, count: int) -> None:
+        normalized = max(0, min(count, len(DEFAULT_VIRTUAL_COMPANION_IDS)))
+        await self.set_setting("virtual_bots_enabled_count", str(normalized))
+
+    async def set_virtual_bot_queue_threshold(self, threshold: int) -> None:
+        await self.set_setting("virtual_bots_queue_threshold", str(max(0, threshold)))
+
+    async def set_virtual_bot_active_ids(self, companion_ids: list[int]) -> None:
+        normalized: list[int] = []
+        for companion_id in companion_ids:
+            if companion_id in DEFAULT_VIRTUAL_COMPANION_IDS and companion_id not in normalized:
+                normalized.append(companion_id)
+        await self.set_setting(
+            "virtual_bots_active_ids",
+            ",".join(str(companion_id) for companion_id in normalized),
+        )
+
     async def redeem_managed_promo_code(
         self,
         user_id: int,
@@ -439,6 +516,40 @@ class Database:
     async def get_virtual_memory(self, pair_id: int, limit: int = 10) -> list[aiosqlite.Row]:
         rows = await self.fetchall(queries.SELECT_VIRTUAL_DIALOG_MEMORY, (pair_id, limit))
         return list(reversed(rows))
+
+    async def add_broadcast_log(
+        self,
+        audience: str,
+        message: str,
+        sent_count: int,
+        failed_count: int,
+        created_by: int | None,
+    ) -> None:
+        await self.execute(
+            queries.INSERT_BROADCAST,
+            (audience, message, sent_count, failed_count, created_by, self._now()),
+        )
+
+    async def get_recent_broadcasts(self, limit: int = 8) -> list[aiosqlite.Row]:
+        return await self.fetchall(queries.SELECT_RECENT_BROADCASTS, (limit,))
+
+    async def get_broadcast_user_ids(self, audience: str) -> list[int]:
+        if audience == "promo":
+            rows = await self.fetchall(
+                queries.SELECT_BROADCAST_NON_PREMIUM_USER_IDS,
+                (self._now(), self._now()),
+            )
+        elif audience == "inactive":
+            rows = await self.fetchall(
+                queries.SELECT_BROADCAST_INACTIVE_USER_IDS,
+                (self._now(), self._days_ago(3)),
+            )
+        else:
+            rows = await self.fetchall(
+                queries.SELECT_BROADCAST_ALL_USER_IDS,
+                (self._now(),),
+            )
+        return [int(row["user_id"]) for row in rows]
 
     async def stats(self) -> dict[str, int]:
         users = await self.fetchone(queries.STATS_USERS)

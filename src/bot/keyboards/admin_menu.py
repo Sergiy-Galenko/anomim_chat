@@ -14,6 +14,10 @@ def admin_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=tr(lang, "🎟 Промокоды", "🎟 Promo Codes"), callback_data="admin:promos"),
             InlineKeyboardButton(text=tr(lang, "🖼 Медиа файлы", "🖼 Media Files"), callback_data="admin:media"),
         ],
+        [
+            InlineKeyboardButton(text=tr(lang, "📣 Рассылка", "📣 Broadcast"), callback_data="admin:broadcasts"),
+            InlineKeyboardButton(text=tr(lang, "🤖 Настройки ботов", "🤖 Bot Settings"), callback_data="admin:bot_settings"),
+        ],
         [InlineKeyboardButton(text=tr(lang, "🧾 Жалобы", "🧾 Reports"), callback_data="admin:reports")],
         [InlineKeyboardButton(text=tr(lang, "📥 Экспорт CSV", "📥 Export CSV"), callback_data="admin:export_stats")],
         [
@@ -148,3 +152,100 @@ def admin_promos_keyboard(lang: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def admin_broadcasts_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "📰 Новости", "📰 News"),
+                    callback_data="admin:broadcast:news",
+                ),
+                InlineKeyboardButton(
+                    text=tr(lang, "🔥 Промо", "🔥 Promo"),
+                    callback_data="admin:broadcast:promo",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "♻️ Вернуть неактивных", "♻️ Re-engage inactive"),
+                    callback_data="admin:broadcast:inactive",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "🔄 Обновить", "🔄 Refresh"),
+                    callback_data="admin:broadcasts",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"),
+                    callback_data="admin:stats",
+                )
+            ],
+        ]
+    )
+
+
+def admin_bot_settings_keyboard(
+    active_ids: list[int],
+    available_ids: list[int],
+    lang: str,
+) -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=tr(lang, "🔢 Кол-во в матчах", "🔢 Match count"),
+                callback_data="admin:bot_count",
+            ),
+            InlineKeyboardButton(
+                text=tr(lang, "📈 Порог людей", "📈 Human threshold"),
+                callback_data="admin:bot_threshold",
+            ),
+        ]
+    ]
+
+    row = []
+    available_set = set(available_ids)
+    active_set = set(active_ids)
+    for companion_id in sorted(
+        {*active_set, *available_set, -101, -102, -103, -104, -105},
+        key=lambda value: abs(value),
+    ):
+        if companion_id in available_set:
+            icon = "✅"
+        elif companion_id in active_set:
+            icon = "🟡"
+        else:
+            icon = "⏸"
+        row.append(
+            InlineKeyboardButton(
+                text=f"{icon} {abs(companion_id) - 100}",
+                callback_data=f"admin:bot_toggle:{companion_id}",
+            )
+        )
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text=tr(lang, "🔄 Обновить", "🔄 Refresh"),
+                callback_data="admin:bot_settings",
+            )
+        ]
+    )
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"),
+                callback_data="admin:stats",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

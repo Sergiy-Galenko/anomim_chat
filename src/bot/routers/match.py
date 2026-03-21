@@ -20,7 +20,7 @@ from ..utils.interests import parse_interests
 from ..utils.premium import is_premium_until
 from ..utils.users import ensure_user, get_state, is_banned
 from ..utils.virtual_companions import (
-    VIRTUAL_COMPANION_QUEUE_THRESHOLD,
+    available_virtual_companion_ids,
     build_virtual_intro,
     build_virtual_match_text,
     pick_virtual_companion,
@@ -109,11 +109,18 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             candidates=candidates,
         )
         if not candidate_id:
+            bot_settings = await db.get_virtual_bot_settings()
             queue_size = await db.get_queue_size()
-            if queue_size > VIRTUAL_COMPANION_QUEUE_THRESHOLD:
+            if queue_size > int(bot_settings["queue_threshold"]):
                 return False
 
-            matched_virtual_id = pick_virtual_companion(user_id, partner_history)
+            allowed_virtual_ids = available_virtual_companion_ids(
+                active_ids=list(bot_settings["active_ids"]),
+                enabled_count=int(bot_settings["enabled_count"]),
+            )
+            matched_virtual_id = pick_virtual_companion(user_id, partner_history, allowed_virtual_ids)
+            if matched_virtual_id is None:
+                return False
             await db.remove_from_queue(user_id)
             await db.set_state(user_id, STATE_CHATTING)
             virtual_pair_id = await db.create_pair(user_id, matched_virtual_id)

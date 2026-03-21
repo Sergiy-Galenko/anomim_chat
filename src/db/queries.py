@@ -110,6 +110,21 @@ CREATE TABLE IF NOT EXISTS virtual_dialog_memory (
     content TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS broadcasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audience TEXT NOT NULL,
+    message TEXT NOT NULL,
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    created_at TEXT NOT NULL
+);
 """
 
 SELECT_USER = "SELECT * FROM users WHERE user_id = ?"
@@ -251,6 +266,19 @@ UPDATE_PROMO_CODE_USAGE = """
 UPDATE promo_codes
 SET used_count = used_count + 1
 WHERE code = ?
+"""
+
+UPSERT_APP_SETTING = """
+INSERT INTO app_settings (key, value)
+VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value
+"""
+
+SELECT_APP_SETTING = """
+SELECT value
+FROM app_settings
+WHERE key = ?
+LIMIT 1
 """
 
 INSERT_PENDING_RATING = """
@@ -427,6 +455,18 @@ WHERE type = 'payment'
 ORDER BY created_at DESC
 """
 
+INSERT_BROADCAST = """
+INSERT INTO broadcasts (audience, message, sent_count, failed_count, created_by, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+SELECT_RECENT_BROADCASTS = """
+SELECT id, audience, message, sent_count, failed_count, created_by, created_at
+FROM broadcasts
+ORDER BY created_at DESC
+LIMIT ?
+"""
+
 SELECT_ACTIVE_USERS = """
 SELECT user_id
 FROM users
@@ -440,6 +480,32 @@ SELECT_ALL_USERS = """
 SELECT *
 FROM users
 ORDER BY created_at DESC
+"""
+
+SELECT_BROADCAST_ALL_USER_IDS = """
+SELECT user_id
+FROM users
+WHERE is_banned = 0
+  AND (banned_until = '' OR banned_until <= ?)
+ORDER BY user_id ASC
+"""
+
+SELECT_BROADCAST_NON_PREMIUM_USER_IDS = """
+SELECT user_id
+FROM users
+WHERE is_banned = 0
+  AND (banned_until = '' OR banned_until <= ?)
+  AND (premium_until = '' OR premium_until <= ?)
+ORDER BY user_id ASC
+"""
+
+SELECT_BROADCAST_INACTIVE_USER_IDS = """
+SELECT user_id
+FROM users
+WHERE is_banned = 0
+  AND (banned_until = '' OR banned_until <= ?)
+  AND (last_seen_at = '' OR last_seen_at < ?)
+ORDER BY user_id ASC
 """
 
 SEARCH_USERS = """
