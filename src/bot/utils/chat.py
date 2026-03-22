@@ -67,6 +67,8 @@ async def end_chat(
         return None
     partner_is_virtual = is_virtual_companion(partner_id)
 
+    if partner_is_virtual:
+        await db.finish_virtual_ab_session(pair_id, ended_by_user=True)
     await db.end_pair(pair_id)
     await db.set_state(user_id, STATE_IDLE)
     if not partner_is_virtual:

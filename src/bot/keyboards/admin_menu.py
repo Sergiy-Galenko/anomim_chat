@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..utils.i18n import tr
+from ..utils.virtual_companions import VIRTUAL_EXPERIMENT_VARIANTS, virtual_variant_label
 
 
 def admin_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -18,6 +19,7 @@ def admin_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=tr(lang, "📣 Рассылка", "📣 Broadcast"), callback_data="admin:broadcasts"),
             InlineKeyboardButton(text=tr(lang, "🤖 Настройки ботов", "🤖 Bot Settings"), callback_data="admin:bot_settings"),
         ],
+        [InlineKeyboardButton(text=tr(lang, "🧪 A/B режимы", "🧪 A/B Modes"), callback_data="admin:ab_report")],
         [InlineKeyboardButton(text=tr(lang, "🧾 Жалобы", "🧾 Reports"), callback_data="admin:reports")],
         [InlineKeyboardButton(text=tr(lang, "📥 Экспорт CSV", "📥 Export CSV"), callback_data="admin:export_stats")],
         [
@@ -192,6 +194,7 @@ def admin_broadcasts_keyboard(lang: str) -> InlineKeyboardMarkup:
 def admin_bot_settings_keyboard(
     active_ids: list[int],
     available_ids: list[int],
+    active_variant_keys: list[str],
     lang: str,
 ) -> InlineKeyboardMarkup:
     keyboard = [
@@ -206,6 +209,30 @@ def admin_bot_settings_keyboard(
             ),
         ]
     ]
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text=tr(lang, "🧪 Метрики A/B", "🧪 A/B Metrics"),
+                callback_data="admin:ab_report",
+            )
+        ]
+    )
+
+    variant_row = []
+    active_variant_set = set(active_variant_keys)
+    for variant_key in VIRTUAL_EXPERIMENT_VARIANTS:
+        icon = "✅" if variant_key in active_variant_set else "⏸"
+        variant_row.append(
+            InlineKeyboardButton(
+                text=f"{icon} {virtual_variant_label(variant_key, lang)}",
+                callback_data=f"admin:ab_toggle:{variant_key}",
+            )
+        )
+        if len(variant_row) == 2:
+            keyboard.append(variant_row)
+            variant_row = []
+    if variant_row:
+        keyboard.append(variant_row)
 
     row = []
     available_set = set(available_ids)
@@ -249,3 +276,28 @@ def admin_bot_settings_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def admin_ab_report_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "🔄 Обновить", "🔄 Refresh"),
+                    callback_data="admin:ab_report",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "🤖 К настройкам ботов", "🤖 Back to Bot Settings"),
+                    callback_data="admin:bot_settings",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr(lang, "↩️ В админ-панель", "↩️ Back to panel"),
+                    callback_data="admin:stats",
+                )
+            ],
+        ]
+    )

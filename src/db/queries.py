@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS virtual_dialog_memory (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS virtual_ab_sessions (
+    pair_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    companion_id INTEGER NOT NULL,
+    variant_key TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL DEFAULT '',
+    user_messages INTEGER NOT NULL DEFAULT 0,
+    companion_messages INTEGER NOT NULL DEFAULT 0,
+    media_messages INTEGER NOT NULL DEFAULT 0,
+    ended_by_user INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -328,6 +341,57 @@ VALUES (?, ?, ?, ?, ?, ?)
 INSERT_VIRTUAL_DIALOG_MEMORY = """
 INSERT INTO virtual_dialog_memory (pair_id, user_id, companion_id, speaker, content, created_at)
 VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+INSERT_VIRTUAL_AB_SESSION = """
+INSERT OR REPLACE INTO virtual_ab_sessions (
+    pair_id,
+    user_id,
+    companion_id,
+    variant_key,
+    started_at,
+    ended_at,
+    user_messages,
+    companion_messages,
+    media_messages,
+    ended_by_user
+)
+VALUES (?, ?, ?, ?, ?, '', 0, 0, 0, 0)
+"""
+
+SELECT_VIRTUAL_AB_SESSION = """
+SELECT pair_id, user_id, companion_id, variant_key, started_at, ended_at,
+       user_messages, companion_messages, media_messages, ended_by_user
+FROM virtual_ab_sessions
+WHERE pair_id = ?
+LIMIT 1
+"""
+
+INCREMENT_VIRTUAL_AB_USER_MESSAGE = """
+UPDATE virtual_ab_sessions
+SET user_messages = user_messages + 1,
+    media_messages = media_messages + ?
+WHERE pair_id = ?
+"""
+
+INCREMENT_VIRTUAL_AB_COMPANION_MESSAGE = """
+UPDATE virtual_ab_sessions
+SET companion_messages = companion_messages + 1
+WHERE pair_id = ?
+"""
+
+FINISH_VIRTUAL_AB_SESSION = """
+UPDATE virtual_ab_sessions
+SET ended_at = ?,
+    ended_by_user = CASE WHEN ? = 1 THEN 1 ELSE ended_by_user END
+WHERE pair_id = ?
+"""
+
+SELECT_ALL_VIRTUAL_AB_SESSIONS = """
+SELECT pair_id, user_id, companion_id, variant_key, started_at, ended_at,
+       user_messages, companion_messages, media_messages, ended_by_user
+FROM virtual_ab_sessions
+ORDER BY started_at DESC
 """
 
 SELECT_VIRTUAL_DIALOG_MEMORY = """

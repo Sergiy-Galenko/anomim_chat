@@ -10,6 +10,7 @@ from . import queries
 
 DEFAULT_VIRTUAL_COMPANION_IDS = (-101, -102, -103, -104, -105)
 DEFAULT_VIRTUAL_QUEUE_THRESHOLD = 4
+DEFAULT_VIRTUAL_AB_VARIANTS = ("spark", "soft", "bold")
 USER_CONTEXT_TOUCH_INTERVAL_SEC = 30.0
 MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC = 3600.0
 
@@ -483,6 +484,176 @@ class Database:
             "virtual_bots_active_ids",
             ",".join(str(companion_id) for companion_id in normalized),
         )
+
+    async def get_virtual_ab_settings(self) -> dict[str, list[str]]:
+        default_variants = list(DEFAULT_VIRTUAL_AB_VARIANTS)
+        raw_variants = await self.get_setting(
+            "virtual_ab_active_variants",
+            ",".join(default_variants),
+        )
+
+        active_variants: list[str] = []
+        for chunk in raw_variants.split(","):
+            variant_key = chunk.strip().lower()
+            if variant_key in DEFAULT_VIRTUAL_AB_VARIANTS and variant_key not in active_variants:
+                active_variants.append(variant_key)
+
+        if not active_variants:
+            active_variants = default_variants
+
+        return {
+            "available_variants": default_variants,
+            "active_variants": active_variants,
+        }
+
+    async def set_virtual_ab_active_variants(self, variant_keys: list[str]) -> None:
+        normalized: list[str] = []
+        for variant_key in variant_keys:
+            candidate = variant_key.strip().lower()
+            if candidate in DEFAULT_VIRTUAL_AB_VARIANTS and candidate not in normalized:
+                normalized.append(candidate)
+        if not normalized:
+            normalized = list(DEFAULT_VIRTUAL_AB_VARIANTS)
+        await self.set_setting(
+            "virtual_ab_active_variants",
+            ",".join(normalized),
+        )
+
+    async def create_virtual_ab_session(
+        self,
+        pair_id: int,
+        user_id: int,
+        companion_id: int,
+        variant_key: str,
+    ) -> None:
+        await self.execute(
+            queries.INSERT_VIRTUAL_AB_SESSION,
+            (pair_id, user_id, companion_id, variant_key.strip().lower(), self._now()),
+        )
+
+    async def get_virtual_ab_session(self, pair_id: int):
+        return await self.fetchone(queries.SELECT_VIRTUAL_AB_SESSION, (pair_id,))
+
+    async def increment_virtual_ab_user_message(self, pair_id: int, *, is_media: bool = False) -> None:
+        await self.execute(
+            queries.INCREMENT_VIRTUAL_AB_USER_MESSAGE,
+            (1 if is_media else 0, pair_id),
+        )
+
+    async def increment_virtual_ab_companion_message(self, pair_id: int) -> None:
+        await self.execute(queries.INCREMENT_VIRTUAL_AB_COMPANION_MESSAGE, (pair_id,))
+
+    async def finish_virtual_ab_session(self, pair_id: int, *, ended_by_user: bool = False) -> None:
+        await self.execute(
+            queries.FINISH_VIRTUAL_AB_SESSION,
+            (self._now(), 1 if ended_by_user else 0, pair_id),
+        )
+
+    async def get_virtual_ab_stats(self) -> dict[str, Any]:
+        rows = await self.fetchall(queries.SELECT_ALL_VIRTUAL_AB_SESSIONS)
+        aggregates: dict[str, dict[str, Any]] = {
+            variant_key: {
+                "key": variant_key,
+                "sessions": 0,
+                "active": 0,
+                "retained": 0,
+                "deep_retained": 0,
+                "total_user_messages": 0,
+                "total_messages": 0,
+                "duration_samples": 0,
+                "duration_minutes_total": 0.0,
+                "early_exits": 0,
+                "media_messages": 0,
+            }
+            for variant_key in DEFAULT_VIRTUAL_AB_VARIANTS
+        }
+
+        active_sessions = 0
+        for row in rows:
+            variant_key = (row["variant_key"] or "").strip().lower()
+            if variant_key not in aggregates:
+                aggregates[variant_key] = {
+                    "key": variant_key or "unknown",
+                    "sessions": 0,
+                    "active": 0,
+                    "retained": 0,
+                    "deep_retained": 0,
+                    "total_user_messages": 0,
+                    "total_messages": 0,
+                    "duration_samples": 0,
+                    "duration_minutes_total": 0.0,
+                    "early_exits": 0,
+                    "media_messages": 0,
+                }
+
+            bucket = aggregates[variant_key]
+            user_messages = int(row["user_messages"] or 0)
+            companion_messages = int(row["companion_messages"] or 0)
+            media_messages = int(row["media_messages"] or 0)
+            ended_at = (row["ended_at"] or "").strip()
+
+            bucket["sessions"] += 1
+            bucket["total_user_messages"] += user_messages
+            bucket["total_messages"] += user_messages + companion_messages
+            bucket["media_messages"] += media_messages
+
+            if user_messages >= 3:
+                bucket["retained"] += 1
+            if user_messages >= 6:
+                bucket["deep_retained"] += 1
+
+            if ended_at:
+                if user_messages < 3:
+                    bucket["early_exits"] += 1
+                try:
+                    started_at_dt = datetime.fromisoformat(row["started_at"])
+                    ended_at_dt = datetime.fromisoformat(ended_at)
+                    duration_minutes = max(
+                        (ended_at_dt - started_at_dt).total_seconds() / 60.0,
+                        0.0,
+                    )
+                    bucket["duration_samples"] += 1
+                    bucket["duration_minutes_total"] += duration_minutes
+                except ValueError:
+                    pass
+            else:
+                bucket["active"] += 1
+                active_sessions += 1
+
+        variants: list[dict[str, Any]] = []
+        ordered_keys = [*DEFAULT_VIRTUAL_AB_VARIANTS, *[key for key in aggregates if key not in DEFAULT_VIRTUAL_AB_VARIANTS]]
+        for variant_key in ordered_keys:
+            bucket = aggregates[variant_key]
+            sessions = int(bucket["sessions"])
+            avg_user_messages = bucket["total_user_messages"] / sessions if sessions else 0.0
+            avg_total_messages = bucket["total_messages"] / sessions if sessions else 0.0
+            avg_duration_minutes = (
+                bucket["duration_minutes_total"] / bucket["duration_samples"]
+                if bucket["duration_samples"]
+                else 0.0
+            )
+            variants.append(
+                {
+                    "key": bucket["key"],
+                    "sessions": sessions,
+                    "active": int(bucket["active"]),
+                    "retained": int(bucket["retained"]),
+                    "deep_retained": int(bucket["deep_retained"]),
+                    "retention_rate": (bucket["retained"] / sessions) * 100 if sessions else 0.0,
+                    "deep_retention_rate": (bucket["deep_retained"] / sessions) * 100 if sessions else 0.0,
+                    "avg_user_messages": avg_user_messages,
+                    "avg_total_messages": avg_total_messages,
+                    "avg_duration_minutes": avg_duration_minutes,
+                    "early_exits": int(bucket["early_exits"]),
+                    "media_messages": int(bucket["media_messages"]),
+                }
+            )
+
+        return {
+            "total_sessions": len(rows),
+            "active_sessions": active_sessions,
+            "variants": variants,
+        }
 
     async def redeem_managed_promo_code(
         self,

@@ -7,7 +7,7 @@ from aiogram.types import Message
 
 from .i18n import tr
 
-VIRTUAL_COMPANION_QUEUE_THRESHOLD = 3
+VIRTUAL_COMPANION_QUEUE_THRESHOLD = 4
 
 SHARED_INTROS_RU = (
     "Ну привет. Посмотрим, как ты умеешь держать внимание.",
@@ -368,6 +368,45 @@ class VirtualCompanion:
     short_replies_en: tuple[str, ...]
     media_replies_ru: tuple[str, ...]
     media_replies_en: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VirtualExperimentVariant:
+    key: str
+    code: str
+    label_ru: str
+    label_en: str
+    summary_ru: str
+    summary_en: str
+    delay_multiplier: float
+    short_reply_max_len: int
+    long_reply_min_len: int
+    intros_ru: tuple[str, ...]
+    intros_en: tuple[str, ...]
+    greeting_replies_ru: tuple[str, ...]
+    greeting_replies_en: tuple[str, ...]
+    question_replies_ru: tuple[str, ...]
+    question_replies_en: tuple[str, ...]
+    text_replies_ru: tuple[str, ...]
+    text_replies_en: tuple[str, ...]
+    short_replies_ru: tuple[str, ...]
+    short_replies_en: tuple[str, ...]
+    media_replies_ru: tuple[str, ...]
+    media_replies_en: tuple[str, ...]
+    compliment_replies_ru: tuple[str, ...]
+    compliment_replies_en: tuple[str, ...]
+    night_replies_ru: tuple[str, ...]
+    night_replies_en: tuple[str, ...]
+    bold_replies_ru: tuple[str, ...]
+    bold_replies_en: tuple[str, ...]
+    doing_replies_ru: tuple[str, ...]
+    doing_replies_en: tuple[str, ...]
+    playful_replies_ru: tuple[str, ...]
+    playful_replies_en: tuple[str, ...]
+    meeting_replies_ru: tuple[str, ...]
+    meeting_replies_en: tuple[str, ...]
+    long_replies_ru: tuple[str, ...]
+    long_replies_en: tuple[str, ...]
 
 
 VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
@@ -788,9 +827,418 @@ VIRTUAL_COMPANIONS: dict[int, VirtualCompanion] = {
     ),
 }
 
+VIRTUAL_EXPERIMENT_VARIANTS: dict[str, VirtualExperimentVariant] = {
+    "spark": VirtualExperimentVariant(
+        key="spark",
+        code="A",
+        label_ru="A Spark",
+        label_en="A Spark",
+        summary_ru="Быстрый игривый разогрев, короткие искры и легкая дерзость.",
+        summary_en="Fast playful warm-up with short sparks and light teasing.",
+        delay_multiplier=0.82,
+        short_reply_max_len=18,
+        long_reply_min_len=100,
+        intros_ru=(
+            "Я люблю, когда диалог сразу щелкает искрой.",
+            "Без долгого входа, ладно? Мне нравится живой темп.",
+            "Сразу в настроение, так интереснее.",
+        ),
+        intros_en=(
+            "I like it when a chat clicks with spark right away.",
+            "No slow opening, okay? I like lively pace.",
+            "Let's jump into the mood fast, it's more fun.",
+        ),
+        greeting_replies_ru=(
+            "Вот это уже живее.",
+            "Да, вот с такого старта я остаюсь.",
+            "Хорошо заходишь, не сбавляй.",
+        ),
+        greeting_replies_en=(
+            "Now that's livelier.",
+            "Yeah, this is the kind of start that keeps me around.",
+            "Good opening, don't slow down.",
+        ),
+        question_replies_ru=(
+            "Хороший заход, но держи искру дальше.",
+            "Люблю вопросы, если за ними есть азарт.",
+        ),
+        question_replies_en=(
+            "Nice move, but keep the spark going.",
+            "I like questions when there's some thrill behind them.",
+        ),
+        text_replies_ru=(
+            "Вот это уже вкуснее.",
+            "Такой темп мне нравится заметно больше.",
+            "Ты быстро оживил этот чат.",
+        ),
+        text_replies_en=(
+            "Now that's more exciting.",
+            "I like this pace a lot more.",
+            "You woke this chat up fast.",
+        ),
+        short_replies_ru=(
+            "О, да.",
+            "Живее.",
+            "Еще.",
+            "Вот так.",
+            "И дальше?",
+        ),
+        short_replies_en=(
+            "Oh, yeah.",
+            "Livelier.",
+            "More.",
+            "Like that.",
+            "And then?",
+        ),
+        media_replies_ru=(
+            "Теперь точно стало горячее по ритму.",
+            "Люблю такие быстрые повороты.",
+        ),
+        media_replies_en=(
+            "That definitely made the pace hotter.",
+            "I like turns like that.",
+        ),
+        compliment_replies_ru=(
+            "Люблю уверенные комплименты без пауз.",
+            "Вот так и держат мой интерес.",
+        ),
+        compliment_replies_en=(
+            "I like confident compliments with no hesitation.",
+            "That's how you keep my attention.",
+        ),
+        night_replies_ru=(
+            "Ночью быстрый флирт звучит особенно хорошо.",
+            "Вот этот поздний темп мне идет.",
+        ),
+        night_replies_en=(
+            "Fast late-night flirting sounds especially good.",
+            "This late pace suits me.",
+        ),
+        bold_replies_ru=(
+            "Вот это уже смелее, мне нравится.",
+            "Люблю, когда не прячут настрой.",
+        ),
+        bold_replies_en=(
+            "Now that's bolder, I like it.",
+            "I like it when the mood isn't hidden.",
+        ),
+        doing_replies_ru=(
+            "Ловлю темп этого чата и пока не хочу выпадать.",
+            "Сейчас явно играю с тобой в быстрый разогрев.",
+        ),
+        doing_replies_en=(
+            "I'm catching the pace of this chat and don't want to drop it yet.",
+            "Right now I'm clearly playing a fast warm-up game with you.",
+        ),
+        playful_replies_ru=(
+            "Вот, теперь уже можно цепляться за этот вайб.",
+            "Так заметно веселее, продолжай.",
+        ),
+        playful_replies_en=(
+            "Now this vibe is worth holding onto.",
+            "Way more fun now, keep going.",
+        ),
+        meeting_replies_ru=(
+            "Ты быстро идешь к сценарию, и это даже забавно.",
+            "Еще чуть-чуть разогрева, и уже можно думать дальше.",
+        ),
+        meeting_replies_en=(
+            "You move toward the scenario fast, and it's kind of fun.",
+            "A bit more warm-up and then maybe we go further.",
+        ),
+        long_replies_ru=(
+            "Даже длинно ты держишь хороший темп.",
+            "Мне нравится, что ты не разваливаешься в длинных сообщениях.",
+        ),
+        long_replies_en=(
+            "Even in longer texts you keep good pace.",
+            "I like that you don't fall apart in long messages.",
+        ),
+    ),
+    "soft": VirtualExperimentVariant(
+        key="soft",
+        code="B",
+        label_ru="B Soft",
+        label_en="B Soft",
+        summary_ru="Мягкое вовлечение, тепло, спокойные ответы и больше внимания к настроению.",
+        summary_en="Warm gentle engagement with calmer replies and more attention to mood.",
+        delay_multiplier=1.14,
+        short_reply_max_len=10,
+        long_reply_min_len=80,
+        intros_ru=(
+            "Мне нравится, когда разговор раскрывается мягко.",
+            "Можно спокойно, но по-настоящему. Так интереснее.",
+            "Я за теплый диалог, а не пустые фразы.",
+        ),
+        intros_en=(
+            "I like it when a conversation opens up softly.",
+            "We can go calmly, but for real. That's more interesting.",
+            "I'm into warm conversation, not empty lines.",
+        ),
+        greeting_replies_ru=(
+            "Очень мягкое начало, это приятно.",
+            "Такой вход мне действительно нравится.",
+            "С этого легко продолжать.",
+        ),
+        greeting_replies_en=(
+            "Very soft start, that's nice.",
+            "I genuinely like an opening like that.",
+            "Easy to continue from this.",
+        ),
+        question_replies_ru=(
+            "Люблю вопросы, в которых чувствуется интерес.",
+            "Спрашивай, мне нравится такое внимание.",
+        ),
+        question_replies_en=(
+            "I like questions that feel genuinely interested.",
+            "Ask away, I like that kind of attention.",
+        ),
+        text_replies_ru=(
+            "В этом есть тепло, и я это замечаю.",
+            "Мне нравится спокойный тон, когда в нем есть искра.",
+            "С тобой этот диалог звучит уютнее.",
+        ),
+        text_replies_en=(
+            "There's warmth in that, and I notice it.",
+            "I like a calm tone when it still has spark.",
+            "This chat feels cozier with you.",
+        ),
+        short_replies_ru=(
+            "Мягко.",
+            "Приятно.",
+            "Слышу.",
+            "Еще чуть.",
+            "Мне нравится.",
+        ),
+        short_replies_en=(
+            "Softly.",
+            "Nice.",
+            "I hear you.",
+            "A bit more.",
+            "I like that.",
+        ),
+        media_replies_ru=(
+            "Это добавило очень нужное настроение.",
+            "Мне нравится такой мягкий поворот.",
+        ),
+        media_replies_en=(
+            "That added exactly the right mood.",
+            "I like this gentle turn.",
+        ),
+        compliment_replies_ru=(
+            "Такие слова читаются особенно приятно, когда они спокойные.",
+            "Мне нравится этот бережный флирт.",
+        ),
+        compliment_replies_en=(
+            "Words like that feel especially nice when they're calm.",
+            "I like this gentle flirting.",
+        ),
+        night_replies_ru=(
+            "Вечером мягкие разговоры цепляют сильнее всего.",
+            "У поздних сообщений есть свое теплое настроение.",
+        ),
+        night_replies_en=(
+            "Soft late chats usually hit the deepest.",
+            "Late messages have their own warm mood.",
+        ),
+        bold_replies_ru=(
+            "Даже смело у тебя выходит довольно красиво.",
+            "Мне нравится, когда смелость не ломает тепло.",
+        ),
+        bold_replies_en=(
+            "Even your bold side still sounds pretty.",
+            "I like it when boldness doesn't break the warmth.",
+        ),
+        doing_replies_ru=(
+            "Сейчас явно остаюсь здесь ради настроения этого диалога.",
+            "Сижу и постепенно втягиваюсь в наш ритм.",
+        ),
+        doing_replies_en=(
+            "Right now I'm staying here for the mood of this chat.",
+            "I'm sitting here and slowly getting pulled into our rhythm.",
+        ),
+        playful_replies_ru=(
+            "Вот так легче улыбаться во время переписки.",
+            "Мне нравится эта мягкая игривость.",
+        ),
+        playful_replies_en=(
+            "This makes it easier to smile while texting.",
+            "I like this soft playfulness.",
+        ),
+        meeting_replies_ru=(
+            "Не спеши, мне нравится сам путь к этому моменту.",
+            "Сначала давай сделаем чат еще теплее.",
+        ),
+        meeting_replies_en=(
+            "No rush, I like the path to that moment.",
+            "Let's make the chat warmer first.",
+        ),
+        long_replies_ru=(
+            "В длинных сообщениях у тебя появляется еще больше живого.",
+            "Мне нравится читать, когда ты раскрываешься чуть глубже.",
+        ),
+        long_replies_en=(
+            "Your longer messages feel even more alive.",
+            "I like reading you when you open up a little deeper.",
+        ),
+    ),
+    "bold": VirtualExperimentVariant(
+        key="bold",
+        code="C",
+        label_ru="C Bold",
+        label_en="C Bold",
+        summary_ru="Более уверенный teasing-сценарий, чуть дерзче, короче и с заметным вызовом.",
+        summary_en="A more confident teasing scenario: shorter, bolder, and more challenging.",
+        delay_multiplier=0.76,
+        short_reply_max_len=16,
+        long_reply_min_len=120,
+        intros_ru=(
+            "Я люблю, когда меня цепляют без лишней скромности.",
+            "Посмотрим, насколько уверенно ты держишь ход.",
+            "Мне нравится диалог, где есть характер.",
+        ),
+        intros_en=(
+            "I like it when someone hooks me without extra shyness.",
+            "Let's see how confidently you can keep your move.",
+            "I like conversations with character.",
+        ),
+        greeting_replies_ru=(
+            "Нормально. Теперь удивляй дальше.",
+            "С этого хотя бы можно начать.",
+            "Ладно, держу внимание. Пока.",
+        ),
+        greeting_replies_en=(
+            "Decent. Now surprise me further.",
+            "At least we can start from this.",
+            "Alright, I have attention. For now.",
+        ),
+        question_replies_ru=(
+            "Ответ получишь, если не уронишь темп.",
+            "Хороший вопрос. Дальше будь еще увереннее.",
+        ),
+        question_replies_en=(
+            "You'll get an answer if you don't drop the pace.",
+            "Good question. Be even more confident next.",
+        ),
+        text_replies_ru=(
+            "Вот это уже ближе к интересному.",
+            "Когда ты так пишешь, скучно не будет.",
+            "У тебя есть характер, и это заметно.",
+        ),
+        text_replies_en=(
+            "Now that's closer to interesting.",
+            "When you text like that, this won't get boring.",
+            "You have character, and it shows.",
+        ),
+        short_replies_ru=(
+            "Смелее.",
+            "И?",
+            "Еще ход.",
+            "Не теряйся.",
+            "Продолжай.",
+        ),
+        short_replies_en=(
+            "Bolder.",
+            "And?",
+            "One more move.",
+            "Don't fade.",
+            "Keep going.",
+        ),
+        media_replies_ru=(
+            "Хм, такой ход я точно замечаю.",
+            "Вот теперь уже интереснее играть.",
+        ),
+        media_replies_en=(
+            "Hmm, I definitely notice moves like that.",
+            "Now it's more interesting to play.",
+        ),
+        compliment_replies_ru=(
+            "Комплимент хороший, но можешь еще смелее.",
+            "Люблю, когда слова звучат уверенно.",
+        ),
+        compliment_replies_en=(
+            "Nice compliment, but you can go bolder.",
+            "I like it when words sound confident.",
+        ),
+        night_replies_ru=(
+            "Ночью такой тон звучит особенно опасно интересно.",
+            "Поздние переписки любят уверенных.",
+        ),
+        night_replies_en=(
+            "At night that tone sounds dangerously interesting.",
+            "Late chats love confidence.",
+        ),
+        bold_replies_ru=(
+            "Вот, уже ближе к тому, что я люблю.",
+            "Мне нравится, когда настрой не прячут.",
+        ),
+        bold_replies_en=(
+            "There, that's closer to what I like.",
+            "I like it when the mood isn't hidden.",
+        ),
+        doing_replies_ru=(
+            "Сейчас явно проверяю, насколько тебя хватит по темпу.",
+            "Ловлю, насколько уверенно ты ведешь этот чат.",
+        ),
+        doing_replies_en=(
+            "Right now I'm testing how long you can hold this pace.",
+            "I'm watching how confidently you carry this chat.",
+        ),
+        playful_replies_ru=(
+            "Вот это уже веселее и опаснее.",
+            "Наконец-то в чате есть зубы.",
+        ),
+        playful_replies_en=(
+            "Now that's more fun and more dangerous.",
+            "Finally this chat has some bite.",
+        ),
+        meeting_replies_ru=(
+            "Не спеши, сначала покажи, что умеешь держать интерес.",
+            "До встречи еще надо красиво дойти сообщениями.",
+        ),
+        meeting_replies_en=(
+            "No rush, first show me you can keep attention.",
+            "Before meeting, get there with style through messages first.",
+        ),
+        long_replies_ru=(
+            "Даже длинно ты держишь уверенный тон.",
+            "Мне нравится, когда объем не убивает характер.",
+        ),
+        long_replies_en=(
+            "Even in longer texts you keep a confident tone.",
+            "I like it when length doesn't kill character.",
+        ),
+    ),
+}
+
 
 def is_virtual_companion(user_id: int | None) -> bool:
     return user_id in VIRTUAL_COMPANIONS if user_id is not None else False
+
+
+def available_virtual_variant_keys(active_keys: list[str] | None = None) -> list[str]:
+    source = active_keys if active_keys is not None else list(VIRTUAL_EXPERIMENT_VARIANTS)
+    keys = [key for key in source if key in VIRTUAL_EXPERIMENT_VARIANTS]
+    return keys or list(VIRTUAL_EXPERIMENT_VARIANTS)
+
+
+def pick_virtual_variant(
+    pair_id: int,
+    user_id: int,
+    active_keys: list[str] | None = None,
+) -> str:
+    keys = available_virtual_variant_keys(active_keys)
+    return keys[abs(pair_id + user_id) % len(keys)]
+
+
+def virtual_variant_label(variant_key: str, lang: str) -> str:
+    variant = _variant_profile(variant_key)
+    return variant.label_ru if lang == "ru" else variant.label_en
+
+
+def virtual_variant_summary(variant_key: str, lang: str) -> str:
+    variant = _variant_profile(variant_key)
+    return variant.summary_ru if lang == "ru" else variant.summary_en
 
 
 def available_virtual_companion_ids(
@@ -831,13 +1279,20 @@ def build_virtual_match_text(lang: str) -> str:
     )
 
 
-def build_virtual_intro(companion_id: int, user_id: int, lang: str) -> str:
+def build_virtual_intro(
+    companion_id: int,
+    user_id: int,
+    lang: str,
+    variant_key: str | None = None,
+) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
+    variant = _variant_profile(variant_key)
     lines = _join_lines(
+        variant.intros_ru if lang == "ru" else variant.intros_en,
         companion.intros_ru if lang == "ru" else companion.intros_en,
         SHARED_INTROS_RU if lang == "ru" else SHARED_INTROS_EN,
     )
-    return _pick_line(lines, f"intro:{companion_id}:{user_id}")
+    return _pick_line(lines, f"intro:{variant.key}:{companion_id}:{user_id}")
 
 
 def build_virtual_admin_text(companion_id: int, lang: str) -> str:
@@ -868,6 +1323,7 @@ async def send_virtual_reply(
     companion_id: int,
     message: Message,
     lang: str,
+    variant_key: str | None = None,
 ) -> str | None:
     return await send_virtual_reply_with_memory(
         bot=bot,
@@ -876,6 +1332,7 @@ async def send_virtual_reply(
         message=message,
         lang=lang,
         memory=None,
+        variant_key=variant_key,
     )
 
 
@@ -886,8 +1343,15 @@ async def send_virtual_reply_with_memory(
     message: Message,
     lang: str,
     memory: list | None,
+    variant_key: str | None = None,
 ) -> str | None:
-    text = compose_virtual_reply_text(companion_id, message, lang, memory=memory)
+    text = compose_virtual_reply_text(
+        companion_id,
+        message,
+        lang,
+        memory=memory,
+        variant_key=variant_key,
+    )
     if not text:
         return None
 
@@ -895,7 +1359,7 @@ async def send_virtual_reply_with_memory(
         await bot.send_chat_action(user_id, "typing")
     except Exception:
         pass
-    await asyncio.sleep(_reply_delay(companion_id, message, memory=memory))
+    await asyncio.sleep(_reply_delay(companion_id, message, memory=memory, variant_key=variant_key))
     await bot.send_message(user_id, text)
     return text
 
@@ -905,26 +1369,33 @@ def compose_virtual_reply_text(
     message: Message,
     lang: str,
     memory: list | None = None,
+    variant_key: str | None = None,
 ) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
-    seed = f"reply:{companion_id}:{message.message_id}"
+    variant = _variant_profile(variant_key)
+    seed = f"reply:{variant.key}:{companion_id}:{message.message_id}"
     greeting_lines = _join_lines(
+        variant.greeting_replies_ru if lang == "ru" else variant.greeting_replies_en,
         companion.greeting_replies_ru if lang == "ru" else companion.greeting_replies_en,
         SHARED_GREETING_REPLIES_RU if lang == "ru" else SHARED_GREETING_REPLIES_EN,
     )
     question_lines = _join_lines(
+        variant.question_replies_ru if lang == "ru" else variant.question_replies_en,
         companion.question_replies_ru if lang == "ru" else companion.question_replies_en,
         SHARED_QUESTION_REPLIES_RU if lang == "ru" else SHARED_QUESTION_REPLIES_EN,
     )
     text_lines = _join_lines(
+        variant.text_replies_ru if lang == "ru" else variant.text_replies_en,
         companion.text_replies_ru if lang == "ru" else companion.text_replies_en,
         SHARED_TEXT_REPLIES_RU if lang == "ru" else SHARED_TEXT_REPLIES_EN,
     )
     short_lines = _join_lines(
+        variant.short_replies_ru if lang == "ru" else variant.short_replies_en,
         companion.short_replies_ru if lang == "ru" else companion.short_replies_en,
         SHARED_SHORT_REPLIES_RU if lang == "ru" else SHARED_SHORT_REPLIES_EN,
     )
     media_lines = _join_lines(
+        variant.media_replies_ru if lang == "ru" else variant.media_replies_en,
         companion.media_replies_ru if lang == "ru" else companion.media_replies_en,
         SHARED_MEDIA_REPLIES_RU if lang == "ru" else SHARED_MEDIA_REPLIES_EN,
     )
@@ -949,46 +1420,65 @@ def compose_virtual_reply_text(
         text,
         ("что дела", "чем занима", "делаешь", "doing", "up to", "busy"),
     ):
-        extra_lines = SHARED_DOING_REPLIES_RU if lang == "ru" else SHARED_DOING_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.doing_replies_ru if lang == "ru" else variant.doing_replies_en,
+            SHARED_DOING_REPLIES_RU if lang == "ru" else SHARED_DOING_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
     if _contains_any(
         text,
         ("красив", "мила", "нежн", "sweet", "cute", "beautiful", "pretty"),
     ):
-        extra_lines = (
-            SHARED_COMPLIMENT_REPLIES_RU if lang == "ru" else SHARED_COMPLIMENT_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.compliment_replies_ru if lang == "ru" else variant.compliment_replies_en,
+            SHARED_COMPLIMENT_REPLIES_RU if lang == "ru" else SHARED_COMPLIMENT_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
         text,
         ("ахах", "хаха", "lol", "lmao", ")))", "😂", "😏", "😉"),
     ):
-        extra_lines = SHARED_PLAYFUL_REPLIES_RU if lang == "ru" else SHARED_PLAYFUL_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.playful_replies_ru if lang == "ru" else variant.playful_replies_en,
+            SHARED_PLAYFUL_REPLIES_RU if lang == "ru" else SHARED_PLAYFUL_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
     if _contains_any(
         text,
         ("ноч", "спишь", "вечер", "sleep", "night", "late", "bedtime"),
     ):
-        extra_lines = SHARED_NIGHT_REPLIES_RU if lang == "ru" else SHARED_NIGHT_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.night_replies_ru if lang == "ru" else variant.night_replies_en,
+            SHARED_NIGHT_REPLIES_RU if lang == "ru" else SHARED_NIGHT_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
     if _contains_any(
         text,
         ("поцел", "обнять", "kiss", "hug", "хочу тебя", "want you"),
     ):
-        extra_lines = SHARED_BOLD_REPLIES_RU if lang == "ru" else SHARED_BOLD_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.bold_replies_ru if lang == "ru" else variant.bold_replies_en,
+            SHARED_BOLD_REPLIES_RU if lang == "ru" else SHARED_BOLD_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
     if _contains_any(
         text,
         ("встрет", "увид", "погуля", "meet", "see you", "go out", "date"),
     ):
-        extra_lines = SHARED_MEETING_REPLIES_RU if lang == "ru" else SHARED_MEETING_REPLIES_EN
+        extra_lines = _join_lines(
+            variant.meeting_replies_ru if lang == "ru" else variant.meeting_replies_en,
+            SHARED_MEETING_REPLIES_RU if lang == "ru" else SHARED_MEETING_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
     if "?" in text:
         return _pick_line(question_lines, seed)
-    if len(text) <= 12:
+    if len(text) <= variant.short_reply_max_len:
         return _pick_line(short_lines, seed)
-    if len(text) >= 90:
-        extra_lines = SHARED_LONG_REPLIES_RU if lang == "ru" else SHARED_LONG_REPLIES_EN
+    if len(text) >= variant.long_reply_min_len:
+        extra_lines = _join_lines(
+            variant.long_replies_ru if lang == "ru" else variant.long_replies_en,
+            SHARED_LONG_REPLIES_RU if lang == "ru" else SHARED_LONG_REPLIES_EN,
+        )
         return _pick_line(extra_lines, seed)
 
     return _pick_line(text_lines, seed)
@@ -1007,6 +1497,12 @@ def _join_lines(*groups: tuple[str, ...]) -> tuple[str, ...]:
     for group in groups:
         merged.extend(group)
     return tuple(merged)
+
+
+def _variant_profile(variant_key: str | None) -> VirtualExperimentVariant:
+    if variant_key and variant_key in VIRTUAL_EXPERIMENT_VARIANTS:
+        return VIRTUAL_EXPERIMENT_VARIANTS[variant_key]
+    return VIRTUAL_EXPERIMENT_VARIANTS["spark"]
 
 
 def _memory_reply(
@@ -1064,8 +1560,14 @@ def _memory_pool(companion_id: int, scenario: str, lang: str) -> tuple[str, ...]
     return source.get(scenario, {}).get(companion_id, ())
 
 
-def _reply_delay(companion_id: int, message: Message, memory: list | None = None) -> float:
+def _reply_delay(
+    companion_id: int,
+    message: Message,
+    memory: list | None = None,
+    variant_key: str | None = None,
+) -> float:
     delay_min, delay_max = COMPANION_DELAY_RANGES.get(companion_id, (0.8, 1.6))
+    variant = _variant_profile(variant_key)
     base = random.Random(f"delay:{companion_id}:{message.message_id}").uniform(delay_min, delay_max)
     if message.text:
         text_length = len(message.text.strip())
@@ -1082,4 +1584,5 @@ def _reply_delay(companion_id: int, message: Message, memory: list | None = None
         )
         if user_message_count >= 5:
             base += 0.1
+    base *= variant.delay_multiplier
     return min(base, 2.8)

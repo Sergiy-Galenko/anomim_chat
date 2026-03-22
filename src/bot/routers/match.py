@@ -24,6 +24,7 @@ from ..utils.virtual_companions import (
     build_virtual_intro,
     build_virtual_match_text,
     pick_virtual_companion,
+    pick_virtual_variant,
 )
 
 router = Router()
@@ -85,6 +86,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
     # Try to match with another waiting user based on interests.
     matched_virtual_id: int | None = None
     virtual_pair_id: int | None = None
+    variant_key: str | None = None
     async with db.lock:
         # Ensure the user is still searching before matching.
         current_state = await get_state(db, user_id)
@@ -109,6 +111,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
         )
         if not candidate_id:
             bot_settings = await db.get_virtual_bot_settings()
+            ab_settings = await db.get_virtual_ab_settings()
             queue_size = await db.get_queue_size()
             if queue_size > int(bot_settings["queue_threshold"]):
                 return False
@@ -121,6 +124,17 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             if matched_virtual_id is None:
                 return False
             virtual_pair_id = await db.start_virtual_pair(user_id, matched_virtual_id)
+            variant_key = pick_virtual_variant(
+                virtual_pair_id,
+                user_id,
+                list(ab_settings["active_variants"]),
+            )
+            await db.create_virtual_ab_session(
+                pair_id=virtual_pair_id,
+                user_id=user_id,
+                companion_id=matched_virtual_id,
+                variant_key=variant_key,
+            )
             candidate_id = matched_virtual_id
         else:
             await db.start_human_pair(user_id, candidate_id)
@@ -148,13 +162,19 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             )
             return False
 
-        intro_text = build_virtual_intro(matched_virtual_id, user_id, user_lang)
+        intro_text = build_virtual_intro(
+            matched_virtual_id,
+            user_id,
+            user_lang,
+            variant_key=variant_key,
+        )
         await safe_send_message(
             message.bot,
             user_id,
             intro_text,
         )
         if virtual_pair_id is not None:
+            await db.increment_virtual_ab_companion_message(virtual_pair_id)
             await db.add_virtual_memory(
                 pair_id=virtual_pair_id,
                 user_id=user_id,
@@ -162,7 +182,12 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
                 speaker="companion",
                 content=intro_text,
             )
-        await db.add_incident(user_id, matched_virtual_id, "virtual_match", "")
+        await db.add_incident(
+            user_id,
+            matched_virtual_id,
+            "virtual_match",
+            variant_key,
+        )
         return True
 
     user_lang = await db.get_lang(user_id)

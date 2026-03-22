@@ -23,6 +23,7 @@ from ..utils.virtual_companions import (
     build_virtual_admin_text,
     is_virtual_companion,
     send_virtual_reply_with_memory,
+    virtual_variant_label,
 )
 
 router = Router()
@@ -119,7 +120,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
         user_id, (now + timedelta(seconds=SKIP_COOLDOWN_SECONDS)).isoformat()
     )
 
-    partner_id, _ = await get_partner(db, user_id)
+    partner_id, pair_id = await get_partner(db, user_id)
     await end_chat(
         db,
         message.bot,
@@ -161,7 +162,7 @@ async def admin_partner_info(message: Message, db: Database, config: Config) -> 
         )
         return
 
-    partner_id, _ = await get_partner(db, user_id)
+    partner_id, pair_id = await get_partner(db, user_id)
     if not partner_id:
         await message.answer(
             tr(lang, "Собеседник не найден.", "Partner not found."),
@@ -170,8 +171,17 @@ async def admin_partner_info(message: Message, db: Database, config: Config) -> 
         return
 
     if is_virtual_companion(partner_id):
+        variant_line = ""
+        if pair_id:
+            ab_session = await db.get_virtual_ab_session(pair_id)
+            if ab_session:
+                variant_line = (
+                    "\n"
+                    + tr(lang, "A/B режим", "A/B mode")
+                    + f": {virtual_variant_label(ab_session['variant_key'], lang)}"
+                )
         await message.answer(
-            build_virtual_admin_text(partner_id, lang),
+            build_virtual_admin_text(partner_id, lang) + variant_line,
             reply_markup=main_menu_keyboard(show_end=True, is_admin=True, lang=lang),
         )
         return
@@ -408,6 +418,21 @@ def _virtual_memory_text(message: Message) -> str:
     return ""
 
 
+def _message_has_media(message: Message) -> bool:
+    return any(
+        (
+            message.photo,
+            message.video,
+            message.animation,
+            message.audio,
+            message.voice,
+            message.video_note,
+            message.sticker,
+            message.document,
+        )
+    )
+
+
 @router.message()
 async def relay_message(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
@@ -458,7 +483,14 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
     if is_virtual_companion(partner_id):
         await _archive_media_message(db, user_id, partner_id, message)
         user_lang = await db.get_lang(user_id)
+        variant_key: str | None = None
         if pair_id:
+            ab_session = await db.get_virtual_ab_session(pair_id)
+            variant_key = (ab_session["variant_key"] or "").strip() if ab_session else None
+            await db.increment_virtual_ab_user_message(
+                pair_id,
+                is_media=_message_has_media(message),
+            )
             await db.add_virtual_memory(
                 pair_id=pair_id,
                 user_id=user_id,
@@ -476,8 +508,10 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             message,
             user_lang,
             memory=memory,
+            variant_key=variant_key,
         )
         if pair_id and reply_text:
+            await db.increment_virtual_ab_companion_message(pair_id)
             await db.add_virtual_memory(
                 pair_id=pair_id,
                 user_id=user_id,

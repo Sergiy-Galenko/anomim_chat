@@ -19,6 +19,7 @@ from aiogram.types import (
 from ...config import Config
 from ...db.database import Database
 from ..keyboards.admin_menu import (
+    admin_ab_report_keyboard,
     admin_bot_settings_keyboard,
     admin_broadcasts_keyboard,
     admin_cancel_keyboard,
@@ -45,7 +46,12 @@ from ..utils.constants import (
 from ..utils.i18n import button_variants, tr
 from ..utils.premium import add_premium_days
 from ..utils.users import format_until_text
-from ..utils.virtual_companions import VIRTUAL_COMPANIONS
+from ..utils.virtual_companions import (
+    VIRTUAL_COMPANIONS,
+    VIRTUAL_EXPERIMENT_VARIANTS,
+    virtual_variant_label,
+    virtual_variant_summary,
+)
 
 router = Router()
 
@@ -319,11 +325,16 @@ def _broadcast_panel_text(rows, lang: str) -> str:
     return "\n".join(lines)
 
 
-def _bot_settings_text(settings: dict[str, int | list[int]], lang: str) -> str:
+def _bot_settings_text(
+    settings: dict[str, int | list[int]],
+    ab_settings: dict[str, list[str]],
+    lang: str,
+) -> str:
     enabled_count = int(settings["enabled_count"])
     queue_threshold = int(settings["queue_threshold"])
     active_ids = set(settings["active_ids"])
     available_ids = set(settings["available_ids"])
+    active_variants = set(ab_settings["active_variants"])
 
     lines = [
         tr(lang, "🤖 Настройки виртуальных ботов", "🤖 Virtual Bot Settings"),
@@ -354,13 +365,124 @@ def _bot_settings_text(settings: dict[str, int | list[int]], lang: str) -> str:
         lines.append(f"   {style}")
 
     lines.append("")
+    lines.append(tr(lang, "🧪 A/B сценарии:", "🧪 A/B scenarios:"))
+    for variant_key in VIRTUAL_EXPERIMENT_VARIANTS:
+        status = (
+            tr(lang, "в тесте", "in test")
+            if variant_key in active_variants
+            else tr(lang, "выключен", "disabled")
+        )
+        lines.append(f"{virtual_variant_label(variant_key, lang)} | {status}")
+        lines.append(f"   {virtual_variant_summary(variant_key, lang)}")
+
+    lines.append("")
     lines.append(
         tr(
             lang,
-            "Кнопки ниже меняют лимит профилей, порог онлайна и включают/выключают стили.",
-            "Use the buttons below to change the profile limit, queue threshold, and enabled styles.",
+            "Кнопки ниже меняют лимит профилей, порог онлайна и активные A/B сценарии.",
+            "Use the buttons below to change the profile limit, queue threshold, and active A/B scenarios.",
         )
     )
+    return "\n".join(lines)
+
+
+def _format_metric(value: float) -> str:
+    return f"{value:.1f}"
+
+
+def _minutes_label(lang: str) -> str:
+    return "мин" if lang == "ru" else "min"
+
+
+def _ab_report_text(
+    stats: dict[str, object],
+    active_variants: list[str],
+    lang: str,
+) -> str:
+    variants = list(stats.get("variants", []))
+    active_set = set(active_variants)
+    total_sessions = int(stats.get("total_sessions", 0))
+    active_sessions = int(stats.get("active_sessions", 0))
+
+    lines = [
+        tr(lang, "🧪 A/B режимы виртуальных ботов", "🧪 Virtual Bot A/B Modes"),
+        "----------------",
+        tr(
+            lang,
+            "Удержание = доля диалогов, где пользователь написал 3+ сообщения.",
+            "Retention = the share of chats where the user sent 3+ messages.",
+        ),
+        tr(
+            lang,
+            "Глубокое удержание = 6+ сообщений. Сравнивайте его вместе со средней длиной диалога.",
+            "Deep retention = 6+ messages. Compare it together with average chat length.",
+        ),
+        f"{tr(lang, 'Всего сессий', 'Total sessions')}: {total_sessions} | "
+        f"{tr(lang, 'Активных сейчас', 'Active now')}: {active_sessions}",
+        "",
+    ]
+
+    leader = None
+    scored_variants = [row for row in variants if int(row["sessions"]) > 0]
+    if scored_variants:
+        leader = max(
+            scored_variants,
+            key=lambda row: (float(row["retention_rate"]), float(row["avg_total_messages"])),
+        )
+        lines.append(
+            tr(
+                lang,
+                f"Лидер по удержанию сейчас: {virtual_variant_label(str(leader['key']), lang)}",
+                f"Current retention leader: {virtual_variant_label(str(leader['key']), lang)}",
+            )
+        )
+        lines.append("")
+
+    if not variants or not scored_variants:
+        lines.append(
+            tr(
+                lang,
+                "Пока нет данных. Статистика появится после нескольких диалогов с виртуальными ботами.",
+                "No data yet. Stats will appear after a few virtual bot chats.",
+            )
+        )
+        return "\n".join(lines)
+
+    for row in variants:
+        variant_key = str(row["key"])
+        status = (
+            tr(lang, "активен", "active")
+            if variant_key in active_set
+            else tr(lang, "выключен", "disabled")
+        )
+        lines.append(f"{virtual_variant_label(variant_key, lang)} | {status}")
+        lines.append(
+            f"   {tr(lang, 'Чатов', 'Chats')}: {row['sessions']} | "
+            f"{tr(lang, 'Удержание 3+', 'Retention 3+')}: {_format_metric(float(row['retention_rate']))}% | "
+            f"{tr(lang, 'Глубокое 6+', 'Deep 6+')}: {_format_metric(float(row['deep_retention_rate']))}%"
+        )
+        lines.append(
+            f"   {tr(lang, 'Ср. сообщений пользователя', 'Avg user msgs')}: {_format_metric(float(row['avg_user_messages']))} | "
+            f"{tr(lang, 'Ср. всего сообщений', 'Avg total msgs')}: {_format_metric(float(row['avg_total_messages']))} | "
+            f"{tr(lang, 'Ср. длительность', 'Avg duration')}: "
+            f"{_format_metric(float(row['avg_duration_minutes']))} {_minutes_label(lang)}"
+        )
+        lines.append(
+            f"   {tr(lang, 'Ранних выходов', 'Early exits')}: {row['early_exits']} | "
+            f"{tr(lang, 'Медиа от пользователя', 'User media')}: {row['media_messages']}"
+        )
+        lines.append(f"   {virtual_variant_summary(variant_key, lang)}")
+
+    if len(active_set) < 2:
+        lines.append("")
+        lines.append(
+            tr(
+                lang,
+                "Для нормального сравнения оставьте активными хотя бы 2 сценария.",
+                "Keep at least 2 active scenarios for a meaningful comparison.",
+            )
+        )
+
     return "\n".join(lines)
 
 
@@ -1376,12 +1498,14 @@ async def admin_bot_settings(callback: CallbackQuery, db: Database, config: Conf
         return
 
     settings = await db.get_virtual_bot_settings()
+    ab_settings = await db.get_virtual_ab_settings()
     await safe_edit_message_text(
         callback.message,
-        _bot_settings_text(settings, lang),
+        _bot_settings_text(settings, ab_settings, lang),
         reply_markup=admin_bot_settings_keyboard(
             list(settings["active_ids"]),
             list(settings["available_ids"]),
+            list(ab_settings["active_variants"]),
             lang,
         ),
     )
@@ -1433,11 +1557,13 @@ async def admin_bot_count_input(
     await db.add_incident(message.from_user.id, None, "bot_settings_count", str(count))
     await state.clear()
     settings = await db.get_virtual_bot_settings()
+    ab_settings = await db.get_virtual_ab_settings()
     await message.answer(
-        _bot_settings_text(settings, lang),
+        _bot_settings_text(settings, ab_settings, lang),
         reply_markup=admin_bot_settings_keyboard(
             list(settings["active_ids"]),
             list(settings["available_ids"]),
+            list(ab_settings["active_variants"]),
             lang,
         ),
     )
@@ -1482,11 +1608,13 @@ async def admin_bot_threshold_input(
     await db.add_incident(message.from_user.id, None, "bot_settings_threshold", str(threshold))
     await state.clear()
     settings = await db.get_virtual_bot_settings()
+    ab_settings = await db.get_virtual_ab_settings()
     await message.answer(
-        _bot_settings_text(settings, lang),
+        _bot_settings_text(settings, ab_settings, lang),
         reply_markup=admin_bot_settings_keyboard(
             list(settings["active_ids"]),
             list(settings["available_ids"]),
+            list(ab_settings["active_variants"]),
             lang,
         ),
     )
@@ -1520,12 +1648,77 @@ async def admin_bot_toggle(callback: CallbackQuery, db: Database, config: Config
     await db.set_virtual_bot_active_ids(active_ids)
     await db.add_incident(callback.from_user.id, None, "bot_settings_toggle", str(companion_id))
     settings = await db.get_virtual_bot_settings()
+    ab_settings = await db.get_virtual_ab_settings()
     await safe_edit_message_text(
         callback.message,
-        _bot_settings_text(settings, lang),
+        _bot_settings_text(settings, ab_settings, lang),
         reply_markup=admin_bot_settings_keyboard(
             list(settings["active_ids"]),
             list(settings["available_ids"]),
+            list(ab_settings["active_variants"]),
+            lang,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:ab_report")
+async def admin_ab_report(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    ab_settings = await db.get_virtual_ab_settings()
+    stats = await db.get_virtual_ab_stats()
+    await safe_edit_message_text(
+        callback.message,
+        _ab_report_text(stats, list(ab_settings["active_variants"]), lang),
+        reply_markup=admin_ab_report_keyboard(lang),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:ab_toggle:"))
+async def admin_ab_toggle(callback: CallbackQuery, db: Database, config: Config) -> None:
+    lang = await db.get_lang(callback.from_user.id)
+    if not _is_admin(callback.from_user.id, config):
+        await callback.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."), show_alert=True)
+        return
+
+    variant_key = ((callback.data or "").split(":")[-1] or "").strip().lower()
+    if variant_key not in VIRTUAL_EXPERIMENT_VARIANTS:
+        await callback.answer(tr(lang, "Неверный режим.", "Invalid mode."), show_alert=True)
+        return
+
+    ab_settings = await db.get_virtual_ab_settings()
+    active_variants = list(ab_settings["active_variants"])
+    if variant_key in active_variants:
+        if len(active_variants) == 1:
+            await callback.answer(
+                tr(
+                    lang,
+                    "Нужно оставить хотя бы один активный сценарий.",
+                    "Keep at least one active scenario.",
+                ),
+                show_alert=True,
+            )
+            return
+        active_variants = [item for item in active_variants if item != variant_key]
+    else:
+        active_variants.append(variant_key)
+
+    await db.set_virtual_ab_active_variants(active_variants)
+    await db.add_incident(callback.from_user.id, None, "bot_settings_ab_toggle", variant_key)
+    settings = await db.get_virtual_bot_settings()
+    ab_settings = await db.get_virtual_ab_settings()
+    await safe_edit_message_text(
+        callback.message,
+        _bot_settings_text(settings, ab_settings, lang),
+        reply_markup=admin_bot_settings_keyboard(
+            list(settings["active_ids"]),
+            list(settings["available_ids"]),
+            list(ab_settings["active_variants"]),
             lang,
         ),
     )
