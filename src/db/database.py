@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any, Optional
 
 import aiosqlite
@@ -9,6 +10,8 @@ from . import queries
 
 DEFAULT_VIRTUAL_COMPANION_IDS = (-101, -102, -103, -104, -105)
 DEFAULT_VIRTUAL_QUEUE_THRESHOLD = 4
+USER_CONTEXT_TOUCH_INTERVAL_SEC = 30.0
+MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC = 3600.0
 
 
 class Database:
@@ -17,6 +20,10 @@ class Database:
         self._conn: Optional[aiosqlite.Connection] = None
         # Simple lock to serialize critical DB operations like matching.
         self.lock = asyncio.Lock()
+        self._known_users: set[int] = set()
+        self._lang_cache: dict[int, str] = {}
+        self._user_touch_cache: dict[int, tuple[str, str, str, float]] = {}
+        self._media_cleanup_deadlines: dict[int, float] = {}
 
     def _resolve_db_file(self) -> Optional[Path]:
         if not self.db_path or self.db_path == ":memory:" or self.db_path.startswith("file:"):
@@ -48,6 +55,16 @@ class Database:
 
     def _days_ago(self, days: int) -> str:
         return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    def _remember_user(self, user_id: int) -> None:
+        self._known_users.add(user_id)
+
+    def _prime_user_cache(self, row: aiosqlite.Row) -> None:
+        user_id = int(row["user_id"])
+        self._remember_user(user_id)
+        lang = (row["lang"] or "").strip().lower() if "lang" in row.keys() else ""
+        if lang in {"ru", "en"}:
+            self._lang_cache[user_id] = lang
 
     async def _ensure_columns(self) -> None:
         assert self._conn is not None
@@ -135,16 +152,29 @@ class Database:
         async with self._conn.execute(query, params) as cursor:
             return await cursor.fetchall()
 
-    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> None:
+    async def execute(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        commit: bool = True,
+    ) -> None:
         assert self._conn is not None
         await self._conn.execute(query, params)
-        await self._conn.commit()
+        if commit:
+            await self._conn.commit()
 
     async def create_user_if_missing(self, user_id: int) -> None:
+        if user_id in self._known_users:
+            return
         await self.execute(queries.INSERT_USER, (user_id, self._now(), "idle"))
+        self._remember_user(user_id)
 
     async def get_user(self, user_id: int) -> Optional[aiosqlite.Row]:
-        return await self.fetchone(queries.SELECT_USER, (user_id,))
+        row = await self.fetchone(queries.SELECT_USER, (user_id,))
+        if row:
+            self._prime_user_cache(row)
+        return row
 
     async def update_user_profile(
         self,
@@ -162,6 +192,50 @@ class Database:
                 self._now(),
                 user_id,
             ),
+        )
+        self._remember_user(user_id)
+
+    async def touch_user_context(
+        self,
+        user_id: int,
+        username: str = "",
+        first_name: str = "",
+        last_name: str = "",
+    ) -> None:
+        normalized_username = username.strip()
+        normalized_first_name = first_name.strip()
+        normalized_last_name = last_name.strip()
+        now_monotonic = monotonic()
+        cached = self._user_touch_cache.get(user_id)
+        if cached is not None:
+            cached_username, cached_first_name, cached_last_name, cached_at = cached
+            if (
+                cached_username == normalized_username
+                and cached_first_name == normalized_first_name
+                and cached_last_name == normalized_last_name
+                and now_monotonic - cached_at < USER_CONTEXT_TOUCH_INTERVAL_SEC
+            ):
+                self._remember_user(user_id)
+                return
+
+        now_iso = self._now()
+        await self.execute(
+            queries.UPSERT_USER_CONTEXT,
+            (
+                user_id,
+                now_iso,
+                normalized_username,
+                normalized_first_name,
+                normalized_last_name,
+                now_iso,
+            ),
+        )
+        self._remember_user(user_id)
+        self._user_touch_cache[user_id] = (
+            normalized_username,
+            normalized_first_name,
+            normalized_last_name,
+            now_monotonic,
         )
 
     async def set_state(self, user_id: int, state: str) -> None:
@@ -198,6 +272,18 @@ class Database:
     async def remove_from_queue(self, user_id: int) -> None:
         await self.execute(queries.DELETE_QUEUE, (user_id,))
 
+    async def queue_user_for_search(self, user_id: int) -> None:
+        assert self._conn is not None
+        joined_at = self._now()
+        try:
+            await self._conn.execute("BEGIN")
+            await self._conn.execute(queries.UPDATE_STATE, ("searching", user_id))
+            await self._conn.execute(queries.INSERT_QUEUE, (user_id, joined_at))
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
     async def get_queue_size(self) -> int:
         row = await self.fetchone(queries.SELECT_QUEUE_SIZE)
         return int(row["count"]) if row else 0
@@ -233,6 +319,43 @@ class Database:
         cursor = await self._conn.execute(queries.INSERT_PAIR, (user1_id, user2_id, self._now()))
         await self._conn.commit()
         return int(cursor.lastrowid)
+
+    async def start_virtual_pair(self, user_id: int, companion_id: int) -> int:
+        assert self._conn is not None
+        try:
+            await self._conn.execute("BEGIN")
+            await self._conn.execute(queries.DELETE_QUEUE, (user_id,))
+            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user_id))
+            cursor = await self._conn.execute(
+                queries.INSERT_PAIR,
+                (user_id, companion_id, self._now()),
+            )
+            await self._conn.execute(queries.INCREMENT_CHATS, (user_id,))
+            await self._conn.commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+    async def start_human_pair(self, user1_id: int, user2_id: int) -> int:
+        assert self._conn is not None
+        try:
+            await self._conn.execute("BEGIN")
+            await self._conn.execute(queries.DELETE_QUEUE, (user1_id,))
+            await self._conn.execute(queries.DELETE_QUEUE, (user2_id,))
+            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user1_id))
+            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user2_id))
+            cursor = await self._conn.execute(
+                queries.INSERT_PAIR,
+                (user1_id, user2_id, self._now()),
+            )
+            await self._conn.execute(queries.INCREMENT_CHATS, (user1_id,))
+            await self._conn.execute(queries.INCREMENT_CHATS, (user2_id,))
+            await self._conn.commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            await self._conn.rollback()
+            raise
 
     async def get_active_pair(self, user_id: int) -> Optional[aiosqlite.Row]:
         return await self.fetchone(queries.SELECT_ACTIVE_PAIR, (user_id, user_id))
@@ -448,8 +571,13 @@ class Database:
 
             return True, target_id
 
-    async def cleanup_media_archive(self, retention_days: int = 3) -> None:
+    async def cleanup_media_archive(self, retention_days: int = 3, *, force: bool = False) -> None:
+        deadline = self._media_cleanup_deadlines.get(retention_days, 0.0)
+        now_monotonic = monotonic()
+        if not force and now_monotonic < deadline:
+            return
         await self.execute(queries.DELETE_OLD_MEDIA_ARCHIVE, (self._days_ago(retention_days),))
+        self._media_cleanup_deadlines[retention_days] = now_monotonic + MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC
 
     async def add_media_record(
         self,
@@ -460,14 +588,29 @@ class Database:
         caption: str = "",
         retention_days: int = 3,
     ) -> None:
-        await self.cleanup_media_archive(retention_days)
-        await self.execute(
-            queries.INSERT_MEDIA_ARCHIVE,
-            (sender_id, receiver_id, media_type, file_id, caption, self._now()),
-        )
+        assert self._conn is not None
+        now_monotonic = monotonic()
+        cleanup_due = now_monotonic >= self._media_cleanup_deadlines.get(retention_days, 0.0)
+        try:
+            await self._conn.execute("BEGIN")
+            if cleanup_due:
+                await self._conn.execute(
+                    queries.DELETE_OLD_MEDIA_ARCHIVE,
+                    (self._days_ago(retention_days),),
+                )
+            await self._conn.execute(
+                queries.INSERT_MEDIA_ARCHIVE,
+                (sender_id, receiver_id, media_type, file_id, caption, self._now()),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+        if cleanup_due:
+            self._media_cleanup_deadlines[retention_days] = now_monotonic + MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC
 
     async def count_recent_media_records(self, retention_days: int = 3) -> int:
-        await self.cleanup_media_archive(retention_days)
+        await self.cleanup_media_archive(retention_days, force=True)
         row = await self.fetchone(
             queries.COUNT_RECENT_MEDIA_ARCHIVE,
             (self._days_ago(retention_days),),
@@ -480,7 +623,7 @@ class Database:
         limit: int = 5,
         offset: int = 0,
     ) -> list[aiosqlite.Row]:
-        await self.cleanup_media_archive(retention_days)
+        await self.cleanup_media_archive(retention_days, force=True)
         return await self.fetchall(
             queries.SELECT_RECENT_MEDIA_ARCHIVE,
             (self._days_ago(retention_days), limit, offset),
@@ -504,14 +647,21 @@ class Database:
         normalized = " ".join((content or "").split()).strip()
         if not normalized:
             return
-        await self.execute(
-            queries.INSERT_VIRTUAL_DIALOG_MEMORY,
-            (pair_id, user_id, companion_id, speaker, normalized, self._now()),
-        )
-        await self.execute(
-            queries.DELETE_OLD_VIRTUAL_DIALOG_MEMORY,
-            (pair_id, pair_id, keep_last),
-        )
+        assert self._conn is not None
+        try:
+            await self._conn.execute("BEGIN")
+            await self._conn.execute(
+                queries.INSERT_VIRTUAL_DIALOG_MEMORY,
+                (pair_id, user_id, companion_id, speaker, normalized, self._now()),
+            )
+            await self._conn.execute(
+                queries.DELETE_OLD_VIRTUAL_DIALOG_MEMORY,
+                (pair_id, pair_id, keep_last),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
 
     async def get_virtual_memory(self, pair_id: int, limit: int = 10) -> list[aiosqlite.Row]:
         rows = await self.fetchall(queries.SELECT_VIRTUAL_DIALOG_MEMORY, (pair_id, limit))
@@ -699,17 +849,23 @@ class Database:
         await self.execute(queries.UPDATE_CONTENT_FILTER, (1 if value else 0, user_id))
 
     async def get_lang(self, user_id: int) -> str:
+        cached = self._lang_cache.get(user_id)
+        if cached in {"ru", "en"}:
+            return cached
         row = await self.fetchone(queries.SELECT_LANG, (user_id,))
         if not row:
             return "ru"
         value = (row["lang"] or "").strip().lower()
-        return value if value in {"ru", "en"} else "ru"
+        normalized = value if value in {"ru", "en"} else "ru"
+        self._lang_cache[user_id] = normalized
+        return normalized
 
     async def set_lang(self, user_id: int, lang: str) -> None:
         normalized = lang.strip().lower()
         if normalized not in {"ru", "en"}:
             normalized = "ru"
         await self.execute(queries.UPDATE_LANG, (normalized, user_id))
+        self._lang_cache[user_id] = normalized
 
     async def get_all_premium_until(self) -> list[str]:
         rows = await self.fetchall(queries.SELECT_ALL_PREMIUM_UNTIL)

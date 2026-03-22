@@ -132,8 +132,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
     if partner_id:
         await db.add_incident(user_id, partner_id, "skip", "")
 
-    await db.set_state(user_id, STATE_SEARCHING)
-    await db.add_to_queue(user_id)
+    await db.queue_user_for_search(user_id)
     await message.answer(
         tr(lang, "⏳ Ищем нового...", "⏳ Looking for a new partner..."),
         reply_markup=searching_keyboard(lang),
@@ -563,8 +562,7 @@ async def _maybe_auto_search(message: Message, db: Database, config: Config, tar
     if state in {STATE_CHATTING, STATE_SEARCHING}:
         return
 
-    await db.set_state(target_user_id, STATE_SEARCHING)
-    await db.add_to_queue(target_user_id)
+    await db.queue_user_for_search(target_user_id)
     lang = await db.get_lang(target_user_id)
     await safe_send_message(
         message.bot,

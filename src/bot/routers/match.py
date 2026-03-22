@@ -71,8 +71,7 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
         )
         return
 
-    await db.set_state(user_id, STATE_SEARCHING)
-    await db.add_to_queue(user_id)
+    await db.queue_user_for_search(user_id)
     status_text = await _search_status_text(db, user_id, lang)
     await message.answer(
         tr(lang, f"⏳ Ищем...\n{status_text}", f"⏳ Searching...\n{status_text}"),
@@ -121,19 +120,10 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             matched_virtual_id = pick_virtual_companion(user_id, partner_history, allowed_virtual_ids)
             if matched_virtual_id is None:
                 return False
-            await db.remove_from_queue(user_id)
-            await db.set_state(user_id, STATE_CHATTING)
-            virtual_pair_id = await db.create_pair(user_id, matched_virtual_id)
-            await db.increment_chats(user_id)
+            virtual_pair_id = await db.start_virtual_pair(user_id, matched_virtual_id)
             candidate_id = matched_virtual_id
         else:
-            await db.remove_from_queue(user_id)
-            await db.remove_from_queue(candidate_id)
-            await db.set_state(user_id, STATE_CHATTING)
-            await db.set_state(candidate_id, STATE_CHATTING)
-            await db.create_pair(user_id, candidate_id)
-            await db.increment_chats(user_id)
-            await db.increment_chats(candidate_id)
+            await db.start_human_pair(user_id, candidate_id)
 
     if matched_virtual_id is not None:
         user_lang = await db.get_lang(user_id)

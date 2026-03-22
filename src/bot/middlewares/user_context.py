@@ -19,8 +19,7 @@ class UserContextMiddleware(BaseMiddleware):
     ) -> Any:
         user = self._resolve_user(event, data)
         if user is not None:
-            await self.db.create_user_if_missing(user.id)
-            await self.db.update_user_profile(
+            await self.db.touch_user_context(
                 user_id=user.id,
                 username=user.username or "",
                 first_name=user.first_name or "",

@@ -133,6 +133,27 @@ INSERT OR IGNORE INTO users (user_id, created_at, state, is_banned, rating, chat
 VALUES (?, ?, ?, 0, 0, 0)
 """
 
+UPSERT_USER_CONTEXT = """
+INSERT INTO users (
+    user_id,
+    created_at,
+    state,
+    username,
+    first_name,
+    last_name,
+    last_seen_at,
+    is_banned,
+    rating,
+    chats_count
+)
+VALUES (?, ?, 'idle', ?, ?, ?, ?, 0, 0, 0)
+ON CONFLICT(user_id) DO UPDATE SET
+    username = excluded.username,
+    first_name = excluded.first_name,
+    last_name = excluded.last_name,
+    last_seen_at = excluded.last_seen_at
+"""
+
 UPDATE_STATE = "UPDATE users SET state = ? WHERE user_id = ?"
 UPDATE_USER_PROFILE = """
 UPDATE users
