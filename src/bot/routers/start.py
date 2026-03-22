@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
@@ -7,14 +7,13 @@ from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
 from ..utils.constants import STATE_CHATTING
 from ..utils.admin import is_admin
-from ..utils.i18n import tr
+from ..utils.i18n import button_variants, tr
 from ..utils.users import ensure_user, get_state, is_banned
 
 router = Router()
 
 
-@router.message(CommandStart())
-async def start_handler(message: Message, db: Database, config: Config) -> None:
+async def _send_main_menu(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
     lang = await db.get_lang(user_id)
@@ -44,3 +43,13 @@ async def start_handler(message: Message, db: Database, config: Config) -> None:
             lang=lang,
         ),
     )
+
+
+@router.message(CommandStart())
+async def start_handler(message: Message, db: Database, config: Config) -> None:
+    await _send_main_menu(message, db, config)
+
+
+@router.message(F.text.in_(button_variants("menu")))
+async def menu_handler(message: Message, db: Database, config: Config) -> None:
+    await _send_main_menu(message, db, config)

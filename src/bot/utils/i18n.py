@@ -7,6 +7,10 @@ BUTTON_TEXTS: dict[str, dict[str, str]] = {
         "ru": "🔄 Найти нового",
         "en": "🔄 Find New",
     },
+    "menu": {
+        "ru": "🏠 Меню",
+        "en": "🏠 Menu",
+    },
     "cancel_search": {
         "ru": "🚫 Отменить поиск",
         "en": "🚫 Cancel Search",
@@ -64,6 +68,7 @@ LEGACY_BUTTON_TEXTS: dict[str, set[str]] = {
         "🔍 Знайти нового",
     },
     "find_new": {"🔄 Знайти нового"},
+    "menu": {"🏠 Меню"},
     "cancel_search": {"❌ Скасувати пошук", "🚫 Скасувати пошук"},
     "interests": {"🎯 Інтереси"},
     "profile": {"🧑‍💻 Мій профіль"},

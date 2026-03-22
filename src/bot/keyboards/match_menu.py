@@ -12,6 +12,9 @@ def searching_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
 
 def find_new_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=button_text("find_new", lang))]],
+        keyboard=[[
+            KeyboardButton(text=button_text("find_new", lang)),
+            KeyboardButton(text=button_text("menu", lang)),
+        ]],
         resize_keyboard=True,
     )
