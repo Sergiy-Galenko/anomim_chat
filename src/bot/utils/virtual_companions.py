@@ -1485,7 +1485,14 @@ def compose_virtual_reply_text(
 
 
 def _pick_line(lines: tuple[str, ...], seed: str) -> str:
-    return random.Random(seed).choice(lines)
+    return _normalize_virtual_line(random.Random(seed).choice(lines))
+
+
+def _normalize_virtual_line(text: str) -> str:
+    normalized = (text or "").rstrip()
+    if normalized.endswith("."):
+        return normalized[:-1]
+    return normalized
 
 
 def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
