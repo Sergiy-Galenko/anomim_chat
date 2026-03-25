@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from ...db.database import Database
 
@@ -9,8 +9,17 @@ async def ensure_user(db: Database, user_id: int) -> None:
     await db.create_user_if_missing(user_id)
 
 
-async def is_banned(db: Database, user_id: int) -> bool:
-    user = await db.get_user(user_id)
+async def get_user_snapshot(db: Database, user_id: int) -> Any:
+    return await db.get_user_snapshot(user_id)
+
+def get_lang_from_snapshot(user: Any) -> str:
+    if not user:
+        return "ru"
+    value = (user["lang"] or "").strip().lower()
+    return value if value in {"ru", "en", "uk", "de"} else "ru"
+
+
+def is_banned_from_snapshot(user: Any) -> bool:
     if not user:
         return False
     if bool(user["is_banned"]):
@@ -18,15 +27,13 @@ async def is_banned(db: Database, user_id: int) -> bool:
     return _is_active_until(user["banned_until"] or "")
 
 
-async def is_muted(db: Database, user_id: int) -> bool:
-    user = await db.get_user(user_id)
+def is_muted_from_snapshot(user: Any) -> bool:
     if not user:
         return False
     return _is_active_until(user["muted_until"] or "")
 
 
-async def get_active_restrictions(db: Database, user_id: int) -> tuple[str, str]:
-    user = await db.get_user(user_id)
+def get_active_restrictions_from_snapshot(user: Any) -> tuple[str, str]:
     if not user:
         return "", ""
 
@@ -39,9 +46,28 @@ async def get_active_restrictions(db: Database, user_id: int) -> tuple[str, str]
     return banned_until, muted_until
 
 
-async def get_state(db: Database, user_id: int) -> Optional[str]:
-    user = await db.get_user(user_id)
+def get_state_from_snapshot(user: Any) -> Optional[str]:
     return user["state"] if user else None
+
+
+async def is_banned(db: Database, user_id: int, user: Any = None) -> bool:
+    snapshot = user or await db.get_user_snapshot(user_id)
+    return is_banned_from_snapshot(snapshot)
+
+
+async def is_muted(db: Database, user_id: int, user: Any = None) -> bool:
+    snapshot = user or await db.get_user_snapshot(user_id)
+    return is_muted_from_snapshot(snapshot)
+
+
+async def get_active_restrictions(db: Database, user_id: int, user: Any = None) -> tuple[str, str]:
+    snapshot = user or await db.get_user_snapshot(user_id)
+    return get_active_restrictions_from_snapshot(snapshot)
+
+
+async def get_state(db: Database, user_id: int, user: Any = None) -> Optional[str]:
+    snapshot = user or await db.get_user_snapshot(user_id)
+    return get_state_from_snapshot(snapshot)
 
 
 def format_until_text(value: str) -> str:

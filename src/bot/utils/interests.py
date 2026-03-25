@@ -1,5 +1,7 @@
 from typing import Iterable, List
 
+from .i18n import normalize_lang
+
 DELIMITER = "|"
 
 INTEREST_CODES = [
@@ -13,13 +15,13 @@ INTEREST_CODES = [
 ]
 
 INTEREST_LABELS: dict[str, dict[str, str]] = {
-    "movies": {"ru": "Кино", "en": "Movies"},
-    "music": {"ru": "Музыка", "en": "Music"},
-    "sports": {"ru": "Спорт", "en": "Sports"},
-    "games": {"ru": "Игры", "en": "Games"},
-    "it": {"ru": "IT", "en": "IT"},
-    "travel": {"ru": "Путешествия", "en": "Travel"},
-    "books": {"ru": "Книги", "en": "Books"},
+    "movies": {"ru": "Кино", "en": "Movies", "uk": "Кіно", "de": "Filme"},
+    "music": {"ru": "Музыка", "en": "Music", "uk": "Музика", "de": "Musik"},
+    "sports": {"ru": "Спорт", "en": "Sports", "uk": "Спорт", "de": "Sport"},
+    "games": {"ru": "Игры", "en": "Games", "uk": "Ігри", "de": "Spiele"},
+    "it": {"ru": "IT", "en": "IT", "uk": "IT", "de": "IT"},
+    "travel": {"ru": "Путешествия", "en": "Travel", "uk": "Подорожі", "de": "Reisen"},
+    "books": {"ru": "Книги", "en": "Books", "uk": "Книги", "de": "Bücher"},
 }
 
 INTEREST_ALIASES: dict[str, str] = {
@@ -28,10 +30,13 @@ INTEREST_ALIASES: dict[str, str] = {
     "movie": "movies",
     "кино": "movies",
     "кіно": "movies",
+    "filme": "movies",
+    "film": "movies",
     # music
     "music": "music",
     "музыка": "music",
     "музика": "music",
+    "musik": "music",
     # sports
     "sports": "sports",
     "sport": "sports",
@@ -41,6 +46,8 @@ INTEREST_ALIASES: dict[str, str] = {
     "game": "games",
     "игры": "games",
     "ігри": "games",
+    "spiele": "games",
+    "spiel": "games",
     # it
     "it": "it",
     # travel
@@ -48,10 +55,15 @@ INTEREST_ALIASES: dict[str, str] = {
     "travels": "travel",
     "путешествия": "travel",
     "подорожі": "travel",
+    "reisen": "travel",
+    "reise": "travel",
     # books
     "books": "books",
     "book": "books",
     "книги": "books",
+    "bücher": "books",
+    "bucher": "books",
+    "buch": "books",
 }
 
 
@@ -99,7 +111,14 @@ def interest_label(code: str, lang: str) -> str:
     if not normalized:
         return code
     labels = INTEREST_LABELS.get(normalized, {})
-    if lang == "en":
+    normalized_lang = normalize_lang(lang)
+    if normalized_lang in labels:
+        return labels.get(normalized_lang, normalized)
+    if normalized_lang == "de":
+        return labels.get("de", labels.get("en", normalized))
+    if normalized_lang == "uk":
+        return labels.get("uk", labels.get("ru", normalized))
+    if normalized_lang == "en":
         return labels.get("en", normalized)
     return labels.get("ru", normalized)
 

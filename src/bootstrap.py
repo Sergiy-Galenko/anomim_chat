@@ -47,8 +47,23 @@ def _build_session(config: Config) -> AiohttpSession:
         raise ProxyConfigurationError(str(exc)) from exc
 
 
+def _build_storage(config: Config):
+    if not config.redis_url:
+        return MemoryStorage(), None
+    try:
+        from aiogram.fsm.storage.redis import RedisStorage
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional production dependency
+        raise RuntimeError(
+            "REDIS_URL is set, but redis dependencies are missing. Install requirements.txt."
+        ) from exc
+
+    storage = RedisStorage.from_url(config.redis_url)
+    return storage, storage.create_isolation()
+
+
 def _build_dispatcher(db: Database, config: Config) -> Dispatcher:
-    dp = Dispatcher(storage=MemoryStorage())
+    storage, isolation = _build_storage(config)
+    dp = Dispatcher(storage=storage, events_isolation=isolation)
 
     dp["db"] = db
     dp["config"] = config
@@ -109,4 +124,5 @@ async def shutdown_app_context(context: AppContext | None = None, reset_cached: 
         _cached_context = None
 
     await target.db.close()
+    await target.dp.storage.close()
     await target.bot.session.close()

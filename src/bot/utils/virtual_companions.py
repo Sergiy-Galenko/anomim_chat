@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from aiogram import Bot
 from aiogram.types import Message
 
-from .i18n import tr
+from .i18n import normalize_lang, tr
 
 VIRTUAL_COMPANION_QUEUE_THRESHOLD = 4
 
@@ -1222,6 +1222,10 @@ def available_virtual_variant_keys(active_keys: list[str] | None = None) -> list
     return keys or list(VIRTUAL_EXPERIMENT_VARIANTS)
 
 
+def _content_lang(lang: str) -> str:
+    return "ru" if normalize_lang(lang) in {"ru", "uk"} else "en"
+
+
 def pick_virtual_variant(
     pair_id: int,
     user_id: int,
@@ -1233,12 +1237,12 @@ def pick_virtual_variant(
 
 def virtual_variant_label(variant_key: str, lang: str) -> str:
     variant = _variant_profile(variant_key)
-    return variant.label_ru if lang == "ru" else variant.label_en
+    return variant.label_ru if _content_lang(lang) == "ru" else variant.label_en
 
 
 def virtual_variant_summary(variant_key: str, lang: str) -> str:
     variant = _variant_profile(variant_key)
-    return variant.summary_ru if lang == "ru" else variant.summary_en
+    return variant.summary_ru if _content_lang(lang) == "ru" else variant.summary_en
 
 
 def available_virtual_companion_ids(
@@ -1254,9 +1258,10 @@ def available_virtual_companion_ids(
 
 def pick_virtual_companion(
     user_id: int,
-    partner_history: set[int],
+    partner_history: set[int] | None = None,
     allowed_ids: list[int] | None = None,
 ) -> int | None:
+    history = partner_history or set()
     base_pool = allowed_ids if allowed_ids is not None else sorted(VIRTUAL_COMPANIONS)
     normalized_pool = [companion_id for companion_id in base_pool if companion_id in VIRTUAL_COMPANIONS]
     if not normalized_pool:
@@ -1265,7 +1270,7 @@ def pick_virtual_companion(
     available = [
         companion_id
         for companion_id in normalized_pool
-        if companion_id not in partner_history
+        if companion_id not in history
     ]
     pool = available or normalized_pool
     return pool[abs(user_id) % len(pool)]
@@ -1276,6 +1281,8 @@ def build_virtual_match_text(lang: str) -> str:
         lang,
         "✅ Собеседник найден. Пишите сообщение.",
         "✅ Partner found. Start chatting.",
+        "✅ Співрозмовника знайдено. Напишіть повідомлення.",
+        "✅ Gesprächspartner gefunden. Schreib eine Nachricht.",
     )
 
 
@@ -1287,28 +1294,32 @@ def build_virtual_intro(
 ) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
     variant = _variant_profile(variant_key)
+    content_lang = _content_lang(lang)
     lines = _join_lines(
-        variant.intros_ru if lang == "ru" else variant.intros_en,
-        companion.intros_ru if lang == "ru" else companion.intros_en,
-        SHARED_INTROS_RU if lang == "ru" else SHARED_INTROS_EN,
+        variant.intros_ru if content_lang == "ru" else variant.intros_en,
+        companion.intros_ru if content_lang == "ru" else companion.intros_en,
+        SHARED_INTROS_RU if content_lang == "ru" else SHARED_INTROS_EN,
     )
     return _pick_line(lines, f"intro:{variant.key}:{companion_id}:{user_id}")
 
 
 def build_virtual_admin_text(companion_id: int, lang: str) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
-    label = companion.admin_label_ru if lang == "ru" else companion.admin_label_en
-    style = companion.admin_style_ru if lang == "ru" else companion.admin_style_en
+    content_lang = _content_lang(lang)
+    label = companion.admin_label_ru if content_lang == "ru" else companion.admin_label_en
+    style = companion.admin_style_ru if content_lang == "ru" else companion.admin_style_en
     delay_min, delay_max = COMPANION_DELAY_RANGES.get(companion_id, (0.8, 1.6))
-    title = tr(lang, "🧷 Инфо партнера\n", "🧷 Partner info\n")
+    title = tr(lang, "🧷 Инфо партнера\n", "🧷 Partner info\n", "🧷 Інфо партнера\n", "🧷 Partnerinfo\n")
     partner_type = tr(
         lang,
         "Тип: встроенная виртуальная собеседница\n",
         "Type: built-in virtual companion\n",
+        "Тип: вбудована віртуальна співрозмовниця\n",
+        "Typ: integrierte virtuelle Gesprächspartnerin\n",
     )
-    style_label = tr(lang, "Стиль", "Style")
-    label_text = tr(lang, "Профиль", "Profile")
-    speed_label = tr(lang, "Темп ответа", "Reply pace")
+    style_label = tr(lang, "Стиль", "Style", "Стиль", "Stil")
+    label_text = tr(lang, "Профиль", "Profile", "Профіль", "Profil")
+    speed_label = tr(lang, "Темп ответа", "Reply pace", "Темп відповіді", "Antworttempo")
     return (
         f"{title}ID: {companion_id}\n"
         f"{label_text}: {label}\n"
@@ -1373,31 +1384,32 @@ def compose_virtual_reply_text(
 ) -> str:
     companion = VIRTUAL_COMPANIONS[companion_id]
     variant = _variant_profile(variant_key)
+    content_lang = _content_lang(lang)
     seed = f"reply:{variant.key}:{companion_id}:{message.message_id}"
     greeting_lines = _join_lines(
-        variant.greeting_replies_ru if lang == "ru" else variant.greeting_replies_en,
-        companion.greeting_replies_ru if lang == "ru" else companion.greeting_replies_en,
-        SHARED_GREETING_REPLIES_RU if lang == "ru" else SHARED_GREETING_REPLIES_EN,
+        variant.greeting_replies_ru if content_lang == "ru" else variant.greeting_replies_en,
+        companion.greeting_replies_ru if content_lang == "ru" else companion.greeting_replies_en,
+        SHARED_GREETING_REPLIES_RU if content_lang == "ru" else SHARED_GREETING_REPLIES_EN,
     )
     question_lines = _join_lines(
-        variant.question_replies_ru if lang == "ru" else variant.question_replies_en,
-        companion.question_replies_ru if lang == "ru" else companion.question_replies_en,
-        SHARED_QUESTION_REPLIES_RU if lang == "ru" else SHARED_QUESTION_REPLIES_EN,
+        variant.question_replies_ru if content_lang == "ru" else variant.question_replies_en,
+        companion.question_replies_ru if content_lang == "ru" else companion.question_replies_en,
+        SHARED_QUESTION_REPLIES_RU if content_lang == "ru" else SHARED_QUESTION_REPLIES_EN,
     )
     text_lines = _join_lines(
-        variant.text_replies_ru if lang == "ru" else variant.text_replies_en,
-        companion.text_replies_ru if lang == "ru" else companion.text_replies_en,
-        SHARED_TEXT_REPLIES_RU if lang == "ru" else SHARED_TEXT_REPLIES_EN,
+        variant.text_replies_ru if content_lang == "ru" else variant.text_replies_en,
+        companion.text_replies_ru if content_lang == "ru" else companion.text_replies_en,
+        SHARED_TEXT_REPLIES_RU if content_lang == "ru" else SHARED_TEXT_REPLIES_EN,
     )
     short_lines = _join_lines(
-        variant.short_replies_ru if lang == "ru" else variant.short_replies_en,
-        companion.short_replies_ru if lang == "ru" else companion.short_replies_en,
-        SHARED_SHORT_REPLIES_RU if lang == "ru" else SHARED_SHORT_REPLIES_EN,
+        variant.short_replies_ru if content_lang == "ru" else variant.short_replies_en,
+        companion.short_replies_ru if content_lang == "ru" else companion.short_replies_en,
+        SHARED_SHORT_REPLIES_RU if content_lang == "ru" else SHARED_SHORT_REPLIES_EN,
     )
     media_lines = _join_lines(
-        variant.media_replies_ru if lang == "ru" else variant.media_replies_en,
-        companion.media_replies_ru if lang == "ru" else companion.media_replies_en,
-        SHARED_MEDIA_REPLIES_RU if lang == "ru" else SHARED_MEDIA_REPLIES_EN,
+        variant.media_replies_ru if content_lang == "ru" else variant.media_replies_en,
+        companion.media_replies_ru if content_lang == "ru" else companion.media_replies_en,
+        SHARED_MEDIA_REPLIES_RU if content_lang == "ru" else SHARED_MEDIA_REPLIES_EN,
     )
 
     if message.photo or message.video or message.animation or message.audio or message.document:
@@ -1421,8 +1433,8 @@ def compose_virtual_reply_text(
         ("что дела", "чем занима", "делаешь", "doing", "up to", "busy"),
     ):
         extra_lines = _join_lines(
-            variant.doing_replies_ru if lang == "ru" else variant.doing_replies_en,
-            SHARED_DOING_REPLIES_RU if lang == "ru" else SHARED_DOING_REPLIES_EN,
+            variant.doing_replies_ru if content_lang == "ru" else variant.doing_replies_en,
+            SHARED_DOING_REPLIES_RU if content_lang == "ru" else SHARED_DOING_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
@@ -1430,8 +1442,8 @@ def compose_virtual_reply_text(
         ("красив", "мила", "нежн", "sweet", "cute", "beautiful", "pretty"),
     ):
         extra_lines = _join_lines(
-            variant.compliment_replies_ru if lang == "ru" else variant.compliment_replies_en,
-            SHARED_COMPLIMENT_REPLIES_RU if lang == "ru" else SHARED_COMPLIMENT_REPLIES_EN,
+            variant.compliment_replies_ru if content_lang == "ru" else variant.compliment_replies_en,
+            SHARED_COMPLIMENT_REPLIES_RU if content_lang == "ru" else SHARED_COMPLIMENT_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
@@ -1439,8 +1451,8 @@ def compose_virtual_reply_text(
         ("ахах", "хаха", "lol", "lmao", ")))", "😂", "😏", "😉"),
     ):
         extra_lines = _join_lines(
-            variant.playful_replies_ru if lang == "ru" else variant.playful_replies_en,
-            SHARED_PLAYFUL_REPLIES_RU if lang == "ru" else SHARED_PLAYFUL_REPLIES_EN,
+            variant.playful_replies_ru if content_lang == "ru" else variant.playful_replies_en,
+            SHARED_PLAYFUL_REPLIES_RU if content_lang == "ru" else SHARED_PLAYFUL_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
@@ -1448,8 +1460,8 @@ def compose_virtual_reply_text(
         ("ноч", "спишь", "вечер", "sleep", "night", "late", "bedtime"),
     ):
         extra_lines = _join_lines(
-            variant.night_replies_ru if lang == "ru" else variant.night_replies_en,
-            SHARED_NIGHT_REPLIES_RU if lang == "ru" else SHARED_NIGHT_REPLIES_EN,
+            variant.night_replies_ru if content_lang == "ru" else variant.night_replies_en,
+            SHARED_NIGHT_REPLIES_RU if content_lang == "ru" else SHARED_NIGHT_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
@@ -1457,8 +1469,8 @@ def compose_virtual_reply_text(
         ("поцел", "обнять", "kiss", "hug", "хочу тебя", "want you"),
     ):
         extra_lines = _join_lines(
-            variant.bold_replies_ru if lang == "ru" else variant.bold_replies_en,
-            SHARED_BOLD_REPLIES_RU if lang == "ru" else SHARED_BOLD_REPLIES_EN,
+            variant.bold_replies_ru if content_lang == "ru" else variant.bold_replies_en,
+            SHARED_BOLD_REPLIES_RU if content_lang == "ru" else SHARED_BOLD_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if _contains_any(
@@ -1466,8 +1478,8 @@ def compose_virtual_reply_text(
         ("встрет", "увид", "погуля", "meet", "see you", "go out", "date"),
     ):
         extra_lines = _join_lines(
-            variant.meeting_replies_ru if lang == "ru" else variant.meeting_replies_en,
-            SHARED_MEETING_REPLIES_RU if lang == "ru" else SHARED_MEETING_REPLIES_EN,
+            variant.meeting_replies_ru if content_lang == "ru" else variant.meeting_replies_en,
+            SHARED_MEETING_REPLIES_RU if content_lang == "ru" else SHARED_MEETING_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
     if "?" in text:
@@ -1476,8 +1488,8 @@ def compose_virtual_reply_text(
         return _pick_line(short_lines, seed)
     if len(text) >= variant.long_reply_min_len:
         extra_lines = _join_lines(
-            variant.long_replies_ru if lang == "ru" else variant.long_replies_en,
-            SHARED_LONG_REPLIES_RU if lang == "ru" else SHARED_LONG_REPLIES_EN,
+            variant.long_replies_ru if content_lang == "ru" else variant.long_replies_en,
+            SHARED_LONG_REPLIES_RU if content_lang == "ru" else SHARED_LONG_REPLIES_EN,
         )
         return _pick_line(extra_lines, seed)
 
@@ -1563,7 +1575,7 @@ def _memory_reply(
 
 
 def _memory_pool(companion_id: int, scenario: str, lang: str) -> tuple[str, ...]:
-    source = MEMORY_REPLY_POOLS_RU if lang == "ru" else MEMORY_REPLY_POOLS_EN
+    source = MEMORY_REPLY_POOLS_RU if _content_lang(lang) == "ru" else MEMORY_REPLY_POOLS_EN
     return source.get(scenario, {}).get(companion_id, ())
 
 

@@ -138,9 +138,28 @@ CREATE TABLE IF NOT EXISTS broadcasts (
     created_by INTEGER,
     created_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_queue_joined_at ON queue(joined_at);
+CREATE INDEX IF NOT EXISTS idx_pairs_active_user1 ON pairs(is_active, user1_id);
+CREATE INDEX IF NOT EXISTS idx_pairs_active_user2 ON pairs(is_active, user2_id);
+CREATE INDEX IF NOT EXISTS idx_pairs_user1_user2 ON pairs(user1_id, user2_id);
+CREATE INDEX IF NOT EXISTS idx_pairs_user2_user1 ON pairs(user2_id, user1_id);
+CREATE INDEX IF NOT EXISTS idx_reports_status_created_at ON reports(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_type_created_at ON incidents(type, created_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_actor_created_at ON incidents(actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_target_created_at ON incidents(target_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_media_archive_created_at ON media_archive(created_at);
+CREATE INDEX IF NOT EXISTS idx_virtual_dialog_memory_pair_id_id ON virtual_dialog_memory(pair_id, id);
 """
 
 SELECT_USER = "SELECT * FROM users WHERE user_id = ?"
+SELECT_USER_WITH_QUEUE = """
+SELECT u.*, q.joined_at
+FROM users u
+LEFT JOIN queue q ON q.user_id = u.user_id
+WHERE u.user_id = ?
+LIMIT 1
+"""
 INSERT_USER = """
 INSERT OR IGNORE INTO users (user_id, created_at, state, is_banned, rating, chats_count)
 VALUES (?, ?, ?, 0, 0, 0)
@@ -197,6 +216,26 @@ FROM queue
 WHERE joined_at < (SELECT joined_at FROM queue WHERE user_id = ?)
 """
 
+SELECT_SEARCH_STATUS = """
+SELECT
+    u.interests,
+    u.only_interest,
+    u.premium_until,
+    CASE
+        WHEN q.joined_at IS NULL THEN 0
+        ELSE (
+            SELECT COUNT(*) + 1
+            FROM queue q2
+            WHERE q2.joined_at < q.joined_at
+        )
+    END AS position,
+    (SELECT COUNT(*) FROM queue) AS queue_size
+FROM users u
+LEFT JOIN queue q ON q.user_id = u.user_id
+WHERE u.user_id = ?
+LIMIT 1
+"""
+
 SELECT_QUEUE_CANDIDATE = """
 SELECT q.user_id
 FROM queue q
@@ -231,6 +270,29 @@ WHERE q.user_id != ?
   AND u.is_banned = 0
   AND (u.banned_until = '' OR u.banned_until <= ?)
 ORDER BY q.joined_at ASC
+"""
+
+SELECT_QUEUE_CANDIDATES_LIMITED = """
+SELECT
+    q.user_id,
+    q.joined_at,
+    u.interests,
+    u.only_interest,
+    u.premium_until,
+    EXISTS(
+        SELECT 1
+        FROM pairs p
+        WHERE (p.user1_id = ? AND p.user2_id = q.user_id)
+           OR (p.user2_id = ? AND p.user1_id = q.user_id)
+    ) AS seen_before
+FROM queue q
+JOIN users u ON u.user_id = q.user_id
+WHERE q.user_id != ?
+  AND u.state = 'searching'
+  AND u.is_banned = 0
+  AND (u.banned_until = '' OR u.banned_until <= ?)
+ORDER BY q.joined_at ASC
+LIMIT ?
 """
 INSERT_PAIR = """
 INSERT INTO pairs (user1_id, user2_id, started_at, ended_at, is_active)

@@ -18,7 +18,13 @@ from ..utils.interests import (
     serialize_interests,
 )
 from ..utils.premium import is_premium_until
-from ..utils.users import ensure_user, get_state, is_banned
+from ..utils.users import (
+    ensure_user,
+    get_lang_from_snapshot,
+    get_state_from_snapshot,
+    get_user_snapshot,
+    is_banned_from_snapshot,
+)
 
 router = Router()
 
@@ -31,24 +37,29 @@ class InterestStates(StatesGroup):
 async def interests_menu(message: Message, db: Database, state: FSMContext, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    if await get_state(db, user_id) == STATE_CHATTING:
+    if get_state_from_snapshot(user) == STATE_CHATTING:
         await message.answer(
             tr(
                 lang,
                 "Изменить интересы можно после завершения диалога.",
                 "You can change interests only after ending the chat.",
+                "Змінити інтереси можна після завершення діалогу.",
+                "Interessen können erst nach dem Beenden des Chats geändert werden.",
             ),
             reply_markup=main_menu_keyboard(
                 show_end=True,
@@ -58,11 +69,9 @@ async def interests_menu(message: Message, db: Database, state: FSMContext, conf
         )
         return
 
-    raw_interests = await db.get_interests(user_id)
-    selected = set(parse_interests(raw_interests))
-    only_interest = await db.get_only_interest(user_id)
-    premium_until = await db.get_premium_until(user_id)
-    is_premium = is_premium_until(premium_until)
+    selected = set(parse_interests(user["interests"] or ""))
+    only_interest = bool(user["only_interest"])
+    is_premium = is_premium_until(user["premium_until"] or "")
 
     await state.set_state(InterestStates.choosing)
     await state.update_data(
@@ -84,7 +93,8 @@ async def interests_callback(
     callback: CallbackQuery, db: Database, state: FSMContext, config: Config
 ) -> None:
     user_id = callback.from_user.id
-    if await is_banned(db, user_id):
+    user = await get_user_snapshot(db, user_id)
+    if is_banned_from_snapshot(user):
         await state.clear()
         await callback.answer()
         return
@@ -93,7 +103,7 @@ async def interests_callback(
     selected = set(data.get("selected", []))
     only_interest = bool(data.get("only_interest", False))
     is_premium = bool(data.get("is_premium", False))
-    lang = data.get("lang") or await db.get_lang(user_id)
+    lang = data.get("lang") or get_lang_from_snapshot(user)
 
     parts = (callback.data or "").split(":", 2)
     action = parts[1] if len(parts) > 1 else ""
@@ -113,6 +123,8 @@ async def interests_callback(
                         lang,
                         "Для нескольких интересов нужен Premium.",
                         "Premium is required for multiple interests.",
+                        "Для кількох інтересів потрібен Premium.",
+                        "Für mehrere Interessen ist Premium erforderlich.",
                     )
                 )
             else:
@@ -121,7 +133,7 @@ async def interests_callback(
     elif action == "only_toggle":
         if not is_premium:
             await callback.answer(
-                tr(lang, "Опция доступна в Premium.", "This option is available in Premium."),
+                tr(lang, "Опция доступна в Premium.", "This option is available in Premium.", "Опція доступна в Premium.", "Diese Option ist in Premium verfügbar."),
                 show_alert=True,
             )
             return
@@ -139,11 +151,13 @@ async def interests_callback(
                 lang,
                 "Интересы очищены. Поиск будет общим.",
                 "Interests cleared. Search will be broad.",
+                "Інтереси очищено. Пошук буде загальним.",
+                "Interessen gelöscht. Die Suche wird allgemein sein.",
             ),
             reply_markup=None,
         )
         await callback.message.answer(
-            tr(lang, "Возвращаюсь в меню.", "Returning to menu."),
+            tr(lang, "Возвращаюсь в меню.", "Returning to menu.", "Повертаюся в меню.", "Zurück zum Menü."),
             reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
@@ -151,11 +165,11 @@ async def interests_callback(
     elif action == "back":
         await state.clear()
         await safe_edit_message_text(callback.message,
-            tr(lang, "Возвращаюсь в меню.", "Returning to menu."),
+            tr(lang, "Возвращаюсь в меню.", "Returning to menu.", "Повертаюся в меню.", "Zurück zum Menü."),
             reply_markup=None,
         )
         await callback.message.answer(
-            tr(lang, "Выберите действие в меню.", "Choose an action from the menu."),
+            tr(lang, "Выберите действие в меню.", "Choose an action from the menu.", "Оберіть дію в меню.", "Wähle eine Aktion im Menü."),
             reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
@@ -172,11 +186,13 @@ async def interests_callback(
                 lang,
                 f"Интересы сохранены: {interests_text}",
                 f"Interests saved: {interests_text}",
+                f"Інтереси збережено: {interests_text}",
+                f"Interessen gespeichert: {interests_text}",
             ),
             reply_markup=None,
         )
         await callback.message.answer(
-            tr(lang, "Возвращаюсь в меню.", "Returning to menu."),
+            tr(lang, "Возвращаюсь в меню.", "Returning to menu.", "Повертаюся в меню.", "Zurück zum Menü."),
             reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
@@ -193,8 +209,8 @@ async def interests_callback(
 def _interests_text(selected: set[str], is_premium: bool, only_interest: bool, lang: str) -> str:
     selected_text = format_interest_list(sorted(selected), lang)
     lines = [
-        tr(lang, "🎯 Интересы", "🎯 Interests"),
-        tr(lang, f"Выбрано: {selected_text}", f"Selected: {selected_text}"),
+        tr(lang, "🎯 Интересы", "🎯 Interests", "🎯 Інтереси", "🎯 Interessen"),
+        tr(lang, f"Выбрано: {selected_text}", f"Selected: {selected_text}", f"Вибрано: {selected_text}", f"Ausgewählt: {selected_text}"),
     ]
     if is_premium:
         lines.append(
@@ -202,6 +218,8 @@ def _interests_text(selected: set[str], is_premium: bool, only_interest: bool, l
                 lang,
                 f"Только с интересом: {'да' if only_interest else 'нет'}",
                 f"Interest-only: {'on' if only_interest else 'off'}",
+                f"Лише за інтересом: {'так' if only_interest else 'ні'}",
+                f"Nur mit Interesse: {'an' if only_interest else 'aus'}",
             )
         )
         lines.append(
@@ -209,6 +227,8 @@ def _interests_text(selected: set[str], is_premium: bool, only_interest: bool, l
                 lang,
                 "Premium: можно выбрать несколько интересов.",
                 "Premium: you can choose multiple interests.",
+                "Premium: можна вибрати кілька інтересів.",
+                "Premium: Du kannst mehrere Interessen wählen.",
             )
         )
     else:
@@ -217,6 +237,8 @@ def _interests_text(selected: set[str], is_premium: bool, only_interest: bool, l
                 lang,
                 "Без Premium доступен один интерес.",
                 "Without Premium, only one interest is available.",
+                "Без Premium доступний лише один інтерес.",
+                "Ohne Premium ist nur ein Interesse verfügbar.",
             )
         )
     return "\n".join(lines)

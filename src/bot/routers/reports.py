@@ -8,12 +8,20 @@ from aiogram.types import Message
 from ...config import Config
 from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
+from ..keyboards.match_menu import find_new_keyboard
 from ..keyboards.report_menu import parse_report_reason, report_keyboard, report_reason_label
-from ..utils.chat import end_chat, get_partner
+from ..utils.chat import get_partner, safe_send_message
 from ..utils.admin import is_admin
 from ..utils.constants import STATE_CHATTING
 from ..utils.i18n import button_variants, tr
-from ..utils.users import ensure_user, format_until_text, get_state, is_banned
+from ..utils.users import (
+    ensure_user,
+    format_until_text,
+    get_lang_from_snapshot,
+    get_state_from_snapshot,
+    get_user_snapshot,
+    is_banned_from_snapshot,
+)
 from ..utils.virtual_companions import is_virtual_companion
 
 router = Router()
@@ -29,24 +37,29 @@ async def start_report(
 ) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    if await get_state(db, user_id) != STATE_CHATTING:
+    if get_state_from_snapshot(user) != STATE_CHATTING:
         await message.answer(
             tr(
                 lang,
                 "Жалоба доступна только во время диалога.",
                 "Report is available only during an active chat.",
+                "Скарга доступна лише під час діалогу.",
+                "Eine Meldung ist nur während eines aktiven Chats verfügbar.",
             ),
             reply_markup=main_menu_keyboard(
                 is_admin=is_admin(user_id, config),
@@ -62,6 +75,8 @@ async def start_report(
                 lang,
                 "На встроенную виртуальную собеседницу жалобу отправить нельзя.",
                 "You can't send a report on the built-in virtual companion.",
+                "На вбудовану віртуальну співрозмовницю не можна поскаржитися.",
+                "Auf die integrierte virtuelle Gesprächspartnerin kann keine Meldung gesendet werden.",
             ),
             reply_markup=main_menu_keyboard(
                 show_end=True,
@@ -74,7 +89,7 @@ async def start_report(
     await state.set_state(ReportStates.waiting_reason)
     await state.update_data(lang=lang)
     await message.answer(
-        tr(lang, "Выберите причину жалобы:", "Choose a report reason:"),
+        tr(lang, "Выберите причину жалобы:", "Choose a report reason:", "Оберіть причину скарги:", "Wähle einen Meldungsgrund:"),
         reply_markup=report_keyboard(lang),
     )
 
@@ -95,6 +110,8 @@ async def handle_report_reason(
                 lang,
                 "Пожалуйста, выберите причину кнопкой.",
                 "Please choose a reason from the buttons.",
+                "Будь ласка, оберіть причину кнопкою.",
+                "Bitte wähle den Grund über die Schaltflächen aus.",
             )
         )
         return
@@ -103,7 +120,7 @@ async def handle_report_reason(
     if not partner_id:
         await state.clear()
         await message.answer(
-            tr(lang, "Диалог уже завершен.", "Chat already ended."),
+            tr(lang, "Диалог уже завершен.", "Chat already ended.", "Діалог уже завершено.", "Der Chat wurde bereits beendet."),
             reply_markup=main_menu_keyboard(
                 is_admin=is_admin(user_id, config),
                 lang=lang,
@@ -117,6 +134,8 @@ async def handle_report_reason(
                 lang,
                 "На встроенную виртуальную собеседницу жалобу отправить нельзя.",
                 "You can't send a report on the built-in virtual companion.",
+                "На вбудовану віртуальну співрозмовницю не можна поскаржитися.",
+                "Auf die integrierte virtuelle Gesprächspartnerin kann keine Meldung gesendet werden.",
             ),
             reply_markup=main_menu_keyboard(
                 show_end=True,
@@ -126,8 +145,17 @@ async def handle_report_reason(
         )
         return
 
-    await db.add_report(user_id, partner_id, reason_code)
-    await db.add_incident(user_id, partner_id, "report", reason_code)
+    result = await db.report_chat_session(user_id, reason_code)
+    if result is None:
+        await state.clear()
+        await message.answer(
+            tr(lang, "Диалог уже завершен.", "Chat already ended.", "Діалог уже завершено.", "Der Chat wurde bereits beendet."),
+            reply_markup=main_menu_keyboard(
+                is_admin=is_admin(user_id, config),
+                lang=lang,
+            ),
+        )
+        return
 
     if config.admin_ids:
         created_at = datetime.now(timezone.utc).isoformat()
@@ -143,4 +171,14 @@ async def handle_report_reason(
             await message.bot.send_message(admin_id, text)
 
     await state.clear()
-    await end_chat(db, message.bot, user_id, collect_feedback=False)
+    await message.answer(
+        tr(lang, "❌ Диалог завершен.", "❌ Chat ended.", "❌ Діалог завершено.", "❌ Chat beendet."),
+        reply_markup=find_new_keyboard(lang),
+    )
+    partner_lang = await db.get_lang(result.partner_id)
+    await safe_send_message(
+        message.bot,
+        result.partner_id,
+        tr(partner_lang, "❌ Диалог завершен.", "❌ Chat ended.", "❌ Діалог завершено.", "❌ Chat beendet."),
+        reply_markup=find_new_keyboard(partner_lang),
+    )

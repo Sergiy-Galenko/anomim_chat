@@ -10,6 +10,7 @@ class Config:
     token: str
     admin_ids: List[int]
     db_path: str
+    redis_url: Optional[str]
     promo_codes: Dict[str, int]
     trial_days: int
     telegram_proxy: Optional[str]
@@ -70,12 +71,20 @@ def _resolve_telegram_proxy() -> Optional[str]:
 
 
 def _resolve_db_path() -> str:
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        return database_url
     raw = os.getenv("DB_PATH", "").strip()
     if raw:
         return raw
     if os.getenv("VERCEL"):
         return "/tmp/ghostchat.db"
     return "ghostchat.db"
+
+
+def _resolve_redis_url() -> Optional[str]:
+    value = os.getenv("REDIS_URL", "").strip()
+    return value or None
 
 
 def load_config() -> Config:
@@ -88,6 +97,7 @@ def load_config() -> Config:
 
     admin_ids = _parse_admin_ids(os.getenv("ADMIN_ID", ""))
     db_path = _resolve_db_path()
+    redis_url = _resolve_redis_url()
     promo_codes = _parse_promo_codes(os.getenv("PROMO_CODES", ""))
     trial_days = int(os.getenv("TRIAL_DAYS", "3").strip() or "3")
     telegram_proxy = _resolve_telegram_proxy()
@@ -101,6 +111,7 @@ def load_config() -> Config:
         token=token,
         admin_ids=admin_ids,
         db_path=db_path,
+        redis_url=redis_url,
         promo_codes=promo_codes,
         trial_days=trial_days,
         telegram_proxy=telegram_proxy,

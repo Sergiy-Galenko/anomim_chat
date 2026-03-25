@@ -39,11 +39,10 @@ from ..utils.chat import (
     safe_send_message,
 )
 from ..utils.constants import (
-    PREMIUM_INFO_TEXT_EN,
-    PREMIUM_INFO_TEXT_RU,
     STATE_IDLE,
+    premium_info_text,
 )
-from ..utils.i18n import button_variants, tr
+from ..utils.i18n import button_variants, normalize_lang, tr
 from ..utils.premium import add_premium_days
 from ..utils.users import format_until_text
 from ..utils.virtual_companions import (
@@ -359,8 +358,9 @@ def _bot_settings_text(
             if companion_id in active_ids
             else tr(lang, "выключен", "disabled")
         )
-        label = companion.admin_label_ru if lang == "ru" else companion.admin_label_en
-        style = companion.admin_style_ru if lang == "ru" else companion.admin_style_en
+        content_lang = _virtual_content_lang(lang)
+        label = companion.admin_label_ru if content_lang == "ru" else companion.admin_label_en
+        style = companion.admin_style_ru if content_lang == "ru" else companion.admin_style_en
         lines.append(f"{abs(companion_id) - 100}. {label} | {status}")
         lines.append(f"   {style}")
 
@@ -390,8 +390,17 @@ def _format_metric(value: float) -> str:
     return f"{value:.1f}"
 
 
+def _virtual_content_lang(lang: str) -> str:
+    return "ru" if normalize_lang(lang) in {"ru", "uk"} else "en"
+
+
 def _minutes_label(lang: str) -> str:
-    return "мин" if lang == "ru" else "min"
+    normalized = normalize_lang(lang)
+    if normalized == "uk":
+        return "хв"
+    if normalized == "de":
+        return "Min."
+    return "мин" if normalized == "ru" else "min"
 
 
 def _ab_report_text(
@@ -768,7 +777,7 @@ async def premium_command(message: Message, db: Database, config: Config) -> Non
     lang = await db.get_lang(message.from_user.id)
     parts = (message.text or "").split()
     if len(parts) == 1:
-        await message.answer(PREMIUM_INFO_TEXT_EN if lang == "en" else PREMIUM_INFO_TEXT_RU)
+        await message.answer(premium_info_text(lang))
         return
 
     if not _is_admin(message.from_user.id, config):

@@ -8,14 +8,18 @@ from ..keyboards.main_menu import main_menu_keyboard
 from ..keyboards.premium_menu import premium_keyboard
 from ..utils.admin import is_admin
 from ..utils.constants import (
-    PREMIUM_INFO_TEXT_EN,
-    PREMIUM_INFO_TEXT_RU,
     PREMIUM_PRICE_BY_DAYS,
     STATE_CHATTING,
+    premium_info_text,
 )
 from ..utils.i18n import button_variants, tr
-from ..utils.premium import add_premium_days
-from ..utils.users import ensure_user, get_state, is_banned
+from ..utils.users import (
+    ensure_user,
+    get_lang_from_snapshot,
+    get_state_from_snapshot,
+    get_user_snapshot,
+    is_banned_from_snapshot,
+)
 
 router = Router()
 
@@ -27,21 +31,24 @@ PRICE_BY_DAYS = PREMIUM_PRICE_BY_DAYS
 async def premium_info(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    state = await get_state(db, user_id)
+    state = get_state_from_snapshot(user)
     await message.answer(
-        PREMIUM_INFO_TEXT_EN if lang == "en" else PREMIUM_INFO_TEXT_RU,
+        premium_info_text(lang),
         reply_markup=premium_keyboard(lang),
     )
     await message.answer(
@@ -49,6 +56,8 @@ async def premium_info(message: Message, db: Database, config: Config) -> None:
             lang,
             "Выберите действие ниже или вернитесь в меню.",
             "Choose an action below or return to the menu.",
+            "Оберіть дію нижче або поверніться в меню.",
+            "Wähle unten eine Aktion oder kehre ins Menü zurück.",
         ),
         reply_markup=main_menu_keyboard(
             show_end=state == STATE_CHATTING,
@@ -62,11 +71,12 @@ async def premium_info(message: Message, db: Database, config: Config) -> None:
 async def premium_buy(callback: CallbackQuery, db: Database, config: Config) -> None:
     user_id = callback.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await callback.answer(
-            tr(lang, "Доступ запрещен.", "Access denied."),
+            tr(lang, "Доступ запрещен.", "Access denied.", "Доступ заборонено.", "Zugriff verweigert."),
             show_alert=True,
         )
         return
@@ -75,14 +85,14 @@ async def premium_buy(callback: CallbackQuery, db: Database, config: Config) -> 
         days = int((callback.data or "").split(":")[2])
     except (IndexError, ValueError):
         await callback.answer(
-            tr(lang, "Неверный тариф.", "Invalid plan."),
+            tr(lang, "Неверный тариф.", "Invalid plan.", "Неправильний тариф.", "Ungültiger Tarif."),
             show_alert=True,
         )
         return
 
     if days not in PRICE_BY_DAYS:
         await callback.answer(
-            tr(lang, "Неверный тариф.", "Invalid plan."),
+            tr(lang, "Неверный тариф.", "Invalid plan.", "Неправильний тариф.", "Ungültiger Tarif."),
             show_alert=True,
         )
         return
@@ -90,11 +100,16 @@ async def premium_buy(callback: CallbackQuery, db: Database, config: Config) -> 
     price = PRICE_BY_DAYS[days]
     await callback.bot.send_invoice(
         chat_id=user_id,
-        title=tr(lang, f"Premium {days} дней", f"Premium {days} days"),
-        description=tr(lang, "Premium в ghostchat_bot", "Premium in ghostchat_bot"),
+        title=tr(lang, f"Premium {days} дней", f"Premium {days} days", f"Premium {days} днів", f"Premium {days} Tage"),
+        description=tr(lang, "Premium в ghostchat_bot", "Premium in ghostchat_bot", "Premium у ghostchat_bot", "Premium in ghostchat_bot"),
         payload=f"premium_{days}",
         currency=STAR_CURRENCY,
-        prices=[LabeledPrice(label=tr(lang, f"Premium {days} дней", f"Premium {days} days"), amount=price)],
+        prices=[
+            LabeledPrice(
+                label=tr(lang, f"Premium {days} дней", f"Premium {days} days", f"Premium {days} днів", f"Premium {days} Tage"),
+                amount=price,
+            )
+        ],
         provider_token="",
         start_parameter="premium",
     )
@@ -118,13 +133,9 @@ async def successful_payment(message: Message, db: Database) -> None:
     except (IndexError, ValueError):
         return
 
-    current_until = await db.get_premium_until(message.from_user.id)
-    new_until = add_premium_days(current_until, days)
-    await db.set_premium_until(message.from_user.id, new_until)
-    await db.add_incident(
+    new_until = await db.grant_paid_premium(
         message.from_user.id,
-        None,
-        "payment",
+        days,
         f"{payload}|{payment.total_amount}|{payment.currency}",
     )
     lang = await db.get_lang(message.from_user.id)
@@ -134,6 +145,8 @@ async def successful_payment(message: Message, db: Database) -> None:
             lang,
             f"✅ Premium активирован на {days} дней.\nДействует до: {new_until}",
             f"✅ Premium activated for {days} days.\nValid until: {new_until}",
+            f"✅ Premium активовано на {days} днів.\nДіє до: {new_until}",
+            f"✅ Premium wurde für {days} Tage aktiviert.\nGültig bis: {new_until}",
         )
     )
 
@@ -142,31 +155,32 @@ async def successful_payment(message: Message, db: Database) -> None:
 async def premium_trial(callback: CallbackQuery, db: Database, config: Config) -> None:
     user_id = callback.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
-        await callback.answer(tr(lang, "Доступ запрещен.", "Access denied."), show_alert=True)
-        return
-
-    if await db.get_trial_used(user_id):
+    if is_banned_from_snapshot(user):
         await callback.answer(
-            tr(lang, "Пробный период уже использован.", "Trial period already used."),
+            tr(lang, "Доступ запрещен.", "Access denied.", "Доступ заборонено.", "Zugriff verweigert."),
             show_alert=True,
         )
         return
 
     days = config.trial_days
-    current_until = await db.get_premium_until(user_id)
-    new_until = add_premium_days(current_until, days)
-    await db.set_premium_until(user_id, new_until)
-    await db.set_trial_used(user_id, True)
-    await db.add_incident(user_id, None, "trial", f"{days}d")
+    result = await db.activate_trial(user_id, days)
+    if result.status == "used":
+        await callback.answer(
+            tr(lang, "Пробный период уже использован.", "Trial period already used.", "Пробний період уже використано.", "Testzeitraum wurde bereits verwendet."),
+            show_alert=True,
+        )
+        return
 
     await callback.message.answer(
         tr(
             lang,
-            f"🎁 Пробный период активирован на {days} дней.\nДействует до: {new_until}",
-            f"🎁 Trial period activated for {days} days.\nValid until: {new_until}",
+            f"🎁 Пробный период активирован на {days} дней.\nДействует до: {result.premium_until}",
+            f"🎁 Trial period activated for {days} days.\nValid until: {result.premium_until}",
+            f"🎁 Пробний період активовано на {days} днів.\nДіє до: {result.premium_until}",
+            f"🎁 Testzeitraum für {days} Tage aktiviert.\nGültig bis: {result.premium_until}",
         )
     )
     await callback.answer()
@@ -176,36 +190,36 @@ async def premium_trial(callback: CallbackQuery, db: Database, config: Config) -
 async def premium_trial_command(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    if await db.get_trial_used(user_id):
+    days = config.trial_days
+    result = await db.activate_trial(user_id, days)
+    if result.status == "used":
         await message.answer(
-            tr(lang, "Пробный период уже использован.", "Trial period already used.")
+            tr(lang, "Пробный период уже использован.", "Trial period already used.", "Пробний період уже використано.", "Testzeitraum wurde bereits verwendet.")
         )
         return
-
-    days = config.trial_days
-    current_until = await db.get_premium_until(user_id)
-    new_until = add_premium_days(current_until, days)
-    await db.set_premium_until(user_id, new_until)
-    await db.set_trial_used(user_id, True)
-    await db.add_incident(user_id, None, "trial", f"{days}d")
 
     await message.answer(
         tr(
             lang,
-            f"🎁 Пробный период активирован на {days} дней. Действует до: {new_until}",
-            f"🎁 Trial period activated for {days} days. Valid until: {new_until}",
+            f"🎁 Пробный период активирован на {days} дней. Действует до: {result.premium_until}",
+            f"🎁 Trial period activated for {days} days. Valid until: {result.premium_until}",
+            f"🎁 Пробний період активовано на {days} днів. Діє до: {result.premium_until}",
+            f"🎁 Testzeitraum für {days} Tage aktiviert. Gültig bis: {result.premium_until}",
         )
     )
 
@@ -213,7 +227,9 @@ async def premium_trial_command(message: Message, db: Database, config: Config) 
 @router.callback_query(F.data == "premium:promo")
 async def premium_promo_hint(callback: CallbackQuery, db: Database) -> None:
     lang = await db.get_lang(callback.from_user.id)
-    await callback.message.answer(tr(lang, "Введите: /promo CODE", "Enter: /promo CODE"))
+    await callback.message.answer(
+        tr(lang, "Введите: /promo CODE", "Enter: /promo CODE", "Введіть: /promo CODE", "Eingeben: /promo CODE")
+    )
     await callback.answer()
 
 
@@ -221,69 +237,73 @@ async def premium_promo_hint(callback: CallbackQuery, db: Database) -> None:
 async def promo_command(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
     parts = (message.text or "").split()
     if len(parts) < 2:
-        await message.answer(tr(lang, "Использование: /promo CODE", "Usage: /promo CODE"))
+        await message.answer(
+            tr(lang, "Использование: /promo CODE", "Usage: /promo CODE", "Використання: /promo CODE", "Verwendung: /promo CODE")
+        )
         return
 
     code = parts[1].strip().upper()
-    managed_status, managed_days = "invalid", None
     managed_promo = await db.get_managed_promo_code(code)
     if managed_promo is not None:
-        managed_status, managed_days = await db.redeem_managed_promo_code(user_id, code)
-        if managed_status == "used":
+        result = await db.redeem_managed_promo_code(user_id, code)
+        if result.status == "used":
             await message.answer(
-                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.")
+                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.", "Цей промокод уже використано.", "Dieser Promo-Code wurde bereits verwendet.")
             )
             return
-        if managed_status in {"exhausted", "inactive"}:
+        if result.status in {"exhausted", "inactive"}:
             await message.answer(
                 tr(
                     lang,
                     "Промокод больше недоступен.",
                     "This promo code is no longer available.",
+                    "Промокод більше недоступний.",
+                    "Dieser Promo-Code ist nicht mehr verfügbar.",
                 )
             )
             return
-        if managed_status == "ok":
-            days = managed_days
-        else:
-            days = None
+        if result.status != "ok":
+            await message.answer(
+                tr(lang, "Неверный промокод.", "Invalid promo code.", "Неправильний промокод.", "Ungültiger Promo-Code.")
+            )
+            return
     else:
         days = config.promo_codes.get(code)
         if not days:
-            await message.answer(tr(lang, "Неверный промокод.", "Invalid promo code."))
-            return
-
-        if await db.has_used_promo(user_id, code):
             await message.answer(
-                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.")
+                tr(lang, "Неверный промокод.", "Invalid promo code.", "Неправильний промокод.", "Ungültiger Promo-Code.")
             )
             return
-
-    current_until = await db.get_premium_until(user_id)
-    new_until = add_premium_days(current_until, days)
-    await db.set_premium_until(user_id, new_until)
-    if managed_promo is None:
-        await db.add_promo_use(user_id, code)
-    await db.add_incident(user_id, None, "promo", code)
+        result = await db.redeem_static_promo_code(user_id, code, days)
+        if result.status == "used":
+            await message.answer(
+                tr(lang, "Этот промокод уже использован.", "This promo code has already been used.", "Цей промокод уже використано.", "Dieser Promo-Code wurde bereits verwendet.")
+            )
+            return
 
     await message.answer(
         tr(
             lang,
-            f"✅ Промокод активирован на {days} дней. Действует до: {new_until}",
-            f"✅ Promo code activated for {days} days. Valid until: {new_until}",
+            f"✅ Промокод активирован на {result.days} дней. Действует до: {result.premium_until}",
+            f"✅ Promo code activated for {result.days} days. Valid until: {result.premium_until}",
+            f"✅ Промокод активовано на {result.days} днів. Діє до: {result.premium_until}",
+            f"✅ Promo-Code für {result.days} Tage aktiviert. Gültig bis: {result.premium_until}",
         )
     )

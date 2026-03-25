@@ -1,10 +1,19 @@
+from __future__ import annotations
+
 import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any, Optional
 
 import aiosqlite
+
+try:
+    import asyncpg
+except ModuleNotFoundError:  # pragma: no cover - optional production dependency
+    asyncpg = None
 
 from . import queries
 
@@ -13,29 +22,141 @@ DEFAULT_VIRTUAL_QUEUE_THRESHOLD = 4
 DEFAULT_VIRTUAL_AB_VARIANTS = ("spark", "soft", "bold")
 USER_CONTEXT_TOUCH_INTERVAL_SEC = 30.0
 MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC = 3600.0
+MATCH_CANDIDATES_LIMIT = 64
+
+POSTGRES_QUERY_OVERRIDES = {
+    queries.INSERT_USER: """
+INSERT INTO users (user_id, created_at, state, is_banned, rating, chats_count)
+VALUES (?, ?, ?, 0, 0, 0)
+ON CONFLICT(user_id) DO NOTHING
+""",
+    queries.INSERT_QUEUE: """
+INSERT INTO queue (user_id, joined_at)
+VALUES (?, ?)
+ON CONFLICT(user_id) DO UPDATE SET joined_at = EXCLUDED.joined_at
+""",
+    queries.INSERT_PENDING_RATING: """
+INSERT INTO pending_ratings (user_id, pair_id, target_id, created_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(user_id) DO UPDATE SET
+    pair_id = EXCLUDED.pair_id,
+    target_id = EXCLUDED.target_id,
+    created_at = EXCLUDED.created_at
+""",
+    queries.INSERT_VIRTUAL_AB_SESSION: """
+INSERT INTO virtual_ab_sessions (
+    pair_id,
+    user_id,
+    companion_id,
+    variant_key,
+    started_at,
+    ended_at,
+    user_messages,
+    companion_messages,
+    media_messages,
+    ended_by_user
+)
+VALUES (?, ?, ?, ?, ?, '', 0, 0, 0, 0)
+ON CONFLICT(pair_id) DO UPDATE SET
+    user_id = EXCLUDED.user_id,
+    companion_id = EXCLUDED.companion_id,
+    variant_key = EXCLUDED.variant_key,
+    started_at = EXCLUDED.started_at,
+    ended_at = EXCLUDED.ended_at,
+    user_messages = EXCLUDED.user_messages,
+    companion_messages = EXCLUDED.companion_messages,
+    media_messages = EXCLUDED.media_messages,
+    ended_by_user = EXCLUDED.ended_by_user
+""",
+}
+
+POSTGRES_INSERT_PAIR = """
+INSERT INTO pairs (user1_id, user2_id, started_at, ended_at, is_active)
+VALUES (?, ?, ?, NULL, 1)
+RETURNING id
+"""
+
+
+def _build_postgres_schema() -> str:
+    return (
+        queries.CREATE_TABLES.replace(
+            "INTEGER PRIMARY KEY AUTOINCREMENT",
+            "BIGSERIAL PRIMARY KEY",
+        ).replace(
+            "INTEGER PRIMARY KEY",
+            "BIGINT PRIMARY KEY",
+        )
+    )
+
+
+POSTGRES_CREATE_TABLES = _build_postgres_schema()
+
+
+@dataclass(slots=True)
+class MatchCommitResult:
+    pair_id: int
+    partner_id: int
+    is_virtual: bool
+
+
+@dataclass(slots=True)
+class ChatCloseResult:
+    pair_id: int
+    partner_id: int
+    partner_is_virtual: bool
+    user_feedback_pending: bool
+    partner_feedback_pending: bool
+
+
+@dataclass(slots=True)
+class PromoRedemptionResult:
+    status: str
+    days: int | None = None
+    premium_until: str | None = None
 
 
 class Database:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self._conn: Optional[aiosqlite.Connection] = None
+        self._pool: Any = None
+        self._dialect = "sqlite"
+        self._compiled_query_cache: dict[str, str] = {}
         # Simple lock to serialize critical DB operations like matching.
         self.lock = asyncio.Lock()
+        self._transaction_lock = asyncio.Lock()
         self._known_users: set[int] = set()
         self._lang_cache: dict[int, str] = {}
         self._user_touch_cache: dict[int, tuple[str, str, str, float]] = {}
         self._media_cleanup_deadlines: dict[int, float] = {}
 
+    def _is_postgres_url(self) -> bool:
+        normalized = self.db_path.strip().lower()
+        return normalized.startswith("postgres://") or normalized.startswith("postgresql://")
+
+    def _is_postgres(self) -> bool:
+        return self._dialect == "postgres"
+
     def _resolve_db_file(self) -> Optional[Path]:
-        if not self.db_path or self.db_path == ":memory:" or self.db_path.startswith("file:"):
+        if (
+            not self.db_path
+            or self.db_path == ":memory:"
+            or self.db_path.startswith("file:")
+            or self._is_postgres_url()
+        ):
             return None
         return Path(self.db_path).expanduser()
 
     async def connect(self) -> None:
+        if self._is_postgres_url():
+            await self._connect_postgres()
+            return
+
         db_file = self._resolve_db_file()
         if db_file is not None:
             db_file.parent.mkdir(parents=True, exist_ok=True)
 
+        self._dialect = "sqlite"
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA foreign_keys = ON")
@@ -50,6 +171,24 @@ class Database:
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()
+            self._conn = None
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+
+    async def _connect_postgres(self) -> None:
+        if asyncpg is None:
+            raise RuntimeError(
+                "PostgreSQL backend requires asyncpg. Install dependencies from requirements.txt."
+            )
+        self._dialect = "postgres"
+        self._pool = await asyncpg.create_pool(dsn=self.db_path, min_size=1, max_size=10)
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for statement in self._split_sql_script(POSTGRES_CREATE_TABLES):
+                    await conn.execute(statement)
+                await self._ensure_columns(connection=conn)
+                await self._ensure_report_columns(connection=conn)
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -57,17 +196,179 @@ class Database:
     def _days_ago(self, days: int) -> str:
         return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
+    def _parse_iso(self, value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _is_active_until(self, value: str) -> bool:
+        dt = self._parse_iso(value)
+        if not dt:
+            return False
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt > datetime.now(timezone.utc)
+
+    def _extend_until(self, current_until: str, days: int) -> str:
+        now = datetime.now(timezone.utc)
+        if days <= 0:
+            return current_until
+        dt = self._parse_iso(current_until)
+        if dt:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            base = dt if dt > now else now
+        else:
+            base = now
+        return (base + timedelta(days=days)).isoformat()
+
     def _remember_user(self, user_id: int) -> None:
         self._known_users.add(user_id)
 
-    def _prime_user_cache(self, row: aiosqlite.Row) -> None:
+    def _normalize_lang(self, value: str | None) -> str:
+        normalized = (value or "").strip().lower()
+        return normalized if normalized in {"ru", "en", "uk", "de"} else "ru"
+
+    def _prime_user_cache(self, row: Any) -> None:
         user_id = int(row["user_id"])
         self._remember_user(user_id)
-        lang = (row["lang"] or "").strip().lower() if "lang" in row.keys() else ""
-        if lang in {"ru", "en"}:
-            self._lang_cache[user_id] = lang
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        if "lang" in keys:
+            self._lang_cache[user_id] = self._normalize_lang(row["lang"])
 
-    async def _ensure_columns(self) -> None:
+    def _resolve_query(self, query: str) -> str:
+        if not self._is_postgres():
+            return query
+        resolved = POSTGRES_QUERY_OVERRIDES.get(query, query)
+        cached = self._compiled_query_cache.get(resolved)
+        if cached is not None:
+            return cached
+
+        parts: list[str] = []
+        index = 1
+        for char in resolved:
+            if char == "?":
+                parts.append(f"${index}")
+                index += 1
+            else:
+                parts.append(char)
+        compiled = "".join(parts)
+        self._compiled_query_cache[resolved] = compiled
+        return compiled
+
+    def _split_sql_script(self, script: str) -> list[str]:
+        return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+    @asynccontextmanager
+    async def transaction(self):
+        if self._is_postgres():
+            assert self._pool is not None
+            async with self._pool.acquire() as connection:
+                async with connection.transaction():
+                    yield connection
+            return
+
+        assert self._conn is not None
+        async with self._transaction_lock:
+            await self._conn.execute("BEGIN")
+            try:
+                yield self._conn
+            except Exception:
+                await self._conn.rollback()
+                raise
+            else:
+                await self._conn.commit()
+
+    async def _fetchone_impl(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        connection: Any = None,
+    ) -> Any:
+        if self._is_postgres():
+            compiled = self._resolve_query(query)
+            if connection is not None:
+                return await connection.fetchrow(compiled, *params)
+            assert self._pool is not None
+            async with self._pool.acquire() as db_conn:
+                return await db_conn.fetchrow(compiled, *params)
+
+        db_conn = connection or self._conn
+        assert db_conn is not None
+        async with db_conn.execute(query, params) as cursor:
+            return await cursor.fetchone()
+
+    async def _fetchall_impl(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        connection: Any = None,
+    ) -> list[Any]:
+        if self._is_postgres():
+            compiled = self._resolve_query(query)
+            if connection is not None:
+                return list(await connection.fetch(compiled, *params))
+            assert self._pool is not None
+            async with self._pool.acquire() as db_conn:
+                return list(await db_conn.fetch(compiled, *params))
+
+        db_conn = connection or self._conn
+        assert db_conn is not None
+        async with db_conn.execute(query, params) as cursor:
+            return await cursor.fetchall()
+
+    async def _execute_impl(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        connection: Any = None,
+        commit: bool = True,
+    ) -> Any:
+        if self._is_postgres():
+            compiled = self._resolve_query(query)
+            if connection is not None:
+                return await connection.execute(compiled, *params)
+            assert self._pool is not None
+            async with self._pool.acquire() as db_conn:
+                return await db_conn.execute(compiled, *params)
+
+        db_conn = connection or self._conn
+        assert db_conn is not None
+        result = await db_conn.execute(query, params)
+        if commit and connection is None:
+            await db_conn.commit()
+        return result
+
+    async def _ensure_columns(self, connection: Any = None) -> None:
+        if self._is_postgres():
+            db_conn = connection
+            assert db_conn is not None
+            statements = (
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS muted_until TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS only_interest INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_used INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_search INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS content_filter INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru'",
+            )
+            for statement in statements:
+                await db_conn.execute(statement)
+            return
+
         assert self._conn is not None
         async with self._conn.execute("PRAGMA table_info(users)") as cursor:
             rows = await cursor.fetchall()
@@ -129,7 +430,19 @@ class Database:
                 "ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'ru'"
             )
 
-    async def _ensure_report_columns(self) -> None:
+    async def _ensure_report_columns(self, connection: Any = None) -> None:
+        if self._is_postgres():
+            db_conn = connection
+            assert db_conn is not None
+            statements = (
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new'",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_at TEXT",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_by BIGINT",
+            )
+            for statement in statements:
+                await db_conn.execute(statement)
+            return
+
         assert self._conn is not None
         async with self._conn.execute("PRAGMA table_info(reports)") as cursor:
             rows = await cursor.fetchall()
@@ -143,15 +456,23 @@ class Database:
         if "resolved_by" not in columns:
             await self._conn.execute("ALTER TABLE reports ADD COLUMN resolved_by INTEGER")
 
-    async def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Optional[aiosqlite.Row]:
-        assert self._conn is not None
-        async with self._conn.execute(query, params) as cursor:
-            return await cursor.fetchone()
+    async def fetchone(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        connection: Any = None,
+    ) -> Any:
+        return await self._fetchone_impl(query, params, connection=connection)
 
-    async def fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
-        assert self._conn is not None
-        async with self._conn.execute(query, params) as cursor:
-            return await cursor.fetchall()
+    async def fetchall(
+        self,
+        query: str,
+        params: tuple[Any, ...] = (),
+        *,
+        connection: Any = None,
+    ) -> list[Any]:
+        return await self._fetchall_impl(query, params, connection=connection)
 
     async def execute(
         self,
@@ -159,11 +480,9 @@ class Database:
         params: tuple[Any, ...] = (),
         *,
         commit: bool = True,
+        connection: Any = None,
     ) -> None:
-        assert self._conn is not None
-        await self._conn.execute(query, params)
-        if commit:
-            await self._conn.commit()
+        await self._execute_impl(query, params, connection=connection, commit=commit)
 
     async def create_user_if_missing(self, user_id: int) -> None:
         if user_id in self._known_users:
@@ -171,11 +490,24 @@ class Database:
         await self.execute(queries.INSERT_USER, (user_id, self._now(), "idle"))
         self._remember_user(user_id)
 
-    async def get_user(self, user_id: int) -> Optional[aiosqlite.Row]:
+    async def get_user(self, user_id: int) -> Any:
         row = await self.fetchone(queries.SELECT_USER, (user_id,))
         if row:
             self._prime_user_cache(row)
         return row
+
+    async def get_user_snapshot(self, user_id: int, *, connection: Any = None) -> Any:
+        row = await self.fetchone(
+            queries.SELECT_USER_WITH_QUEUE,
+            (user_id,),
+            connection=connection,
+        )
+        if row:
+            self._prime_user_cache(row)
+        return row
+
+    async def get_search_status_snapshot(self, user_id: int) -> Any:
+        return await self.fetchone(queries.SELECT_SEARCH_STATUS, (user_id,))
 
     async def update_user_profile(
         self,
@@ -274,16 +606,20 @@ class Database:
         await self.execute(queries.DELETE_QUEUE, (user_id,))
 
     async def queue_user_for_search(self, user_id: int) -> None:
-        assert self._conn is not None
         joined_at = self._now()
-        try:
-            await self._conn.execute("BEGIN")
-            await self._conn.execute(queries.UPDATE_STATE, ("searching", user_id))
-            await self._conn.execute(queries.INSERT_QUEUE, (user_id, joined_at))
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
+        async with self.transaction() as connection:
+            await self.execute(
+                queries.UPDATE_STATE,
+                ("searching", user_id),
+                commit=False,
+                connection=connection,
+            )
+            await self.execute(
+                queries.INSERT_QUEUE,
+                (user_id, joined_at),
+                commit=False,
+                connection=connection,
+            )
 
     async def get_queue_size(self) -> int:
         row = await self.fetchone(queries.SELECT_QUEUE_SIZE)
@@ -315,57 +651,439 @@ class Database:
     async def get_queue_candidates(self, exclude_user_id: int) -> list[aiosqlite.Row]:
         return await self.fetchall(queries.SELECT_QUEUE_CANDIDATES, (exclude_user_id, self._now()))
 
-    async def create_pair(self, user1_id: int, user2_id: int) -> int:
-        assert self._conn is not None
-        cursor = await self._conn.execute(queries.INSERT_PAIR, (user1_id, user2_id, self._now()))
-        await self._conn.commit()
+    async def get_queue_candidates_limited(
+        self,
+        exclude_user_id: int,
+        *,
+        limit: int = MATCH_CANDIDATES_LIMIT,
+    ) -> list[Any]:
+        return await self.fetchall(
+            queries.SELECT_QUEUE_CANDIDATES_LIMITED,
+            (
+                exclude_user_id,
+                exclude_user_id,
+                exclude_user_id,
+                self._now(),
+                limit,
+            ),
+        )
+
+    async def _insert_pair_row(self, user1_id: int, user2_id: int, *, connection: Any) -> int:
+        started_at = self._now()
+        if self._is_postgres():
+            query = self._resolve_query(POSTGRES_INSERT_PAIR)
+            return int(await connection.fetchval(query, user1_id, user2_id, started_at))
+        cursor = await connection.execute(queries.INSERT_PAIR, (user1_id, user2_id, started_at))
         return int(cursor.lastrowid)
 
+    async def create_pair(self, user1_id: int, user2_id: int) -> int:
+        async with self.transaction() as connection:
+            return await self._insert_pair_row(user1_id, user2_id, connection=connection)
+
     async def start_virtual_pair(self, user_id: int, companion_id: int) -> int:
-        assert self._conn is not None
-        try:
-            await self._conn.execute("BEGIN")
-            await self._conn.execute(queries.DELETE_QUEUE, (user_id,))
-            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user_id))
-            cursor = await self._conn.execute(
-                queries.INSERT_PAIR,
-                (user_id, companion_id, self._now()),
+        async with self.transaction() as connection:
+            await self.execute(
+                queries.DELETE_QUEUE,
+                (user_id,),
+                commit=False,
+                connection=connection,
             )
-            await self._conn.execute(queries.INCREMENT_CHATS, (user_id,))
-            await self._conn.commit()
-            return int(cursor.lastrowid)
-        except Exception:
-            await self._conn.rollback()
-            raise
+            await self.execute(
+                queries.UPDATE_STATE,
+                ("chatting", user_id),
+                commit=False,
+                connection=connection,
+            )
+            pair_id = await self._insert_pair_row(user_id, companion_id, connection=connection)
+            await self.execute(
+                queries.INCREMENT_CHATS,
+                (user_id,),
+                commit=False,
+                connection=connection,
+            )
+            return pair_id
 
     async def start_human_pair(self, user1_id: int, user2_id: int) -> int:
-        assert self._conn is not None
-        try:
-            await self._conn.execute("BEGIN")
-            await self._conn.execute(queries.DELETE_QUEUE, (user1_id,))
-            await self._conn.execute(queries.DELETE_QUEUE, (user2_id,))
-            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user1_id))
-            await self._conn.execute(queries.UPDATE_STATE, ("chatting", user2_id))
-            cursor = await self._conn.execute(
-                queries.INSERT_PAIR,
-                (user1_id, user2_id, self._now()),
+        async with self.transaction() as connection:
+            await self.execute(
+                queries.DELETE_QUEUE,
+                (user1_id,),
+                commit=False,
+                connection=connection,
             )
-            await self._conn.execute(queries.INCREMENT_CHATS, (user1_id,))
-            await self._conn.execute(queries.INCREMENT_CHATS, (user2_id,))
-            await self._conn.commit()
-            return int(cursor.lastrowid)
-        except Exception:
-            await self._conn.rollback()
-            raise
+            await self.execute(
+                queries.DELETE_QUEUE,
+                (user2_id,),
+                commit=False,
+                connection=connection,
+            )
+            await self.execute(
+                queries.UPDATE_STATE,
+                ("chatting", user1_id),
+                commit=False,
+                connection=connection,
+            )
+            await self.execute(
+                queries.UPDATE_STATE,
+                ("chatting", user2_id),
+                commit=False,
+                connection=connection,
+            )
+            pair_id = await self._insert_pair_row(user1_id, user2_id, connection=connection)
+            await self.execute(
+                queries.INCREMENT_CHATS,
+                (user1_id,),
+                commit=False,
+                connection=connection,
+            )
+            await self.execute(
+                queries.INCREMENT_CHATS,
+                (user2_id,),
+                commit=False,
+                connection=connection,
+            )
+            return pair_id
 
-    async def get_active_pair(self, user_id: int) -> Optional[aiosqlite.Row]:
-        return await self.fetchone(queries.SELECT_ACTIVE_PAIR, (user_id, user_id))
+    async def finalize_match(self, user_id: int, partner_id: int, *, is_virtual: bool) -> MatchCommitResult | None:
+        async with self.lock:
+            async with self.transaction() as connection:
+                user = await self.get_user_snapshot(user_id, connection=connection)
+                if not user or (user["state"] or "") != "searching" or not (user["joined_at"] or ""):
+                    return None
+                if bool(user["is_banned"]) or self._is_active_until(user["banned_until"] or ""):
+                    return None
+
+                if is_virtual:
+                    await self.execute(
+                        queries.DELETE_QUEUE,
+                        (user_id,),
+                        commit=False,
+                        connection=connection,
+                    )
+                    await self.execute(
+                        queries.UPDATE_STATE,
+                        ("chatting", user_id),
+                        commit=False,
+                        connection=connection,
+                    )
+                    pair_id = await self._insert_pair_row(user_id, partner_id, connection=connection)
+                    await self.execute(
+                        queries.INCREMENT_CHATS,
+                        (user_id,),
+                        commit=False,
+                        connection=connection,
+                    )
+                    return MatchCommitResult(pair_id=pair_id, partner_id=partner_id, is_virtual=True)
+
+                partner = await self.get_user_snapshot(partner_id, connection=connection)
+                if (
+                    not partner
+                    or (partner["state"] or "") != "searching"
+                    or not (partner["joined_at"] or "")
+                    or bool(partner["is_banned"])
+                    or self._is_active_until(partner["banned_until"] or "")
+                ):
+                    return None
+
+                await self.execute(
+                    queries.DELETE_QUEUE,
+                    (user_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.DELETE_QUEUE,
+                    (partner_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("chatting", user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("chatting", partner_id),
+                    commit=False,
+                    connection=connection,
+                )
+                pair_id = await self._insert_pair_row(user_id, partner_id, connection=connection)
+                await self.execute(
+                    queries.INCREMENT_CHATS,
+                    (user_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INCREMENT_CHATS,
+                    (partner_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                return MatchCommitResult(pair_id=pair_id, partner_id=partner_id, is_virtual=False)
+
+    async def get_active_pair(self, user_id: int, *, connection: Any = None) -> Any:
+        return await self.fetchone(
+            queries.SELECT_ACTIVE_PAIR,
+            (user_id, user_id),
+            connection=connection,
+        )
 
     async def end_pair(self, pair_id: int) -> None:
         await self.execute(queries.END_PAIR_BY_ID, (self._now(), pair_id))
 
     async def add_report(self, reporter_id: int, reported_id: int, reason: str) -> None:
         await self.execute(queries.INSERT_REPORT, (reporter_id, reported_id, reason, self._now()))
+
+    async def end_chat_session(
+        self,
+        user_id: int,
+        *,
+        notify_user: bool = True,
+        notify_partner: bool = True,
+        collect_feedback: bool = True,
+        ended_by_user: bool = True,
+    ) -> ChatCloseResult | None:
+        async with self.lock:
+            async with self.transaction() as connection:
+                pair = await self.get_active_pair(user_id, connection=connection)
+                if not pair:
+                    return None
+
+                pair_id = int(pair["id"])
+                partner_id = int(pair["user2_id"] if int(pair["user1_id"]) == user_id else pair["user1_id"])
+                partner_is_virtual = partner_id < 0
+                user_feedback_pending = collect_feedback and notify_user and not partner_is_virtual
+                partner_feedback_pending = collect_feedback and notify_partner and not partner_is_virtual
+
+                if partner_is_virtual:
+                    await self.execute(
+                        queries.FINISH_VIRTUAL_AB_SESSION,
+                        (self._now(), 1 if ended_by_user else 0, pair_id),
+                        commit=False,
+                        connection=connection,
+                    )
+                await self.execute(
+                    queries.END_PAIR_BY_ID,
+                    (self._now(), pair_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("idle", user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                if not partner_is_virtual:
+                    await self.execute(
+                        queries.UPDATE_STATE,
+                        ("idle", partner_id),
+                        commit=False,
+                        connection=connection,
+                    )
+
+                await self.execute(
+                    queries.DELETE_PENDING_RATING,
+                    (user_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                if not partner_is_virtual:
+                    await self.execute(
+                        queries.DELETE_PENDING_RATING,
+                        (partner_id,),
+                        commit=False,
+                        connection=connection,
+                    )
+
+                if user_feedback_pending:
+                    await self.execute(
+                        queries.INSERT_PENDING_RATING,
+                        (user_id, pair_id, partner_id, self._now()),
+                        commit=False,
+                        connection=connection,
+                    )
+                if partner_feedback_pending:
+                    await self.execute(
+                        queries.INSERT_PENDING_RATING,
+                        (partner_id, pair_id, user_id, self._now()),
+                        commit=False,
+                        connection=connection,
+                    )
+
+                return ChatCloseResult(
+                    pair_id=pair_id,
+                    partner_id=partner_id,
+                    partner_is_virtual=partner_is_virtual,
+                    user_feedback_pending=user_feedback_pending,
+                    partner_feedback_pending=partner_feedback_pending,
+                )
+
+    async def skip_chat_session(self, user_id: int, *, skip_until: str) -> ChatCloseResult | None:
+        async with self.lock:
+            async with self.transaction() as connection:
+                pair = await self.get_active_pair(user_id, connection=connection)
+                if not pair:
+                    return None
+
+                pair_id = int(pair["id"])
+                partner_id = int(pair["user2_id"] if int(pair["user1_id"]) == user_id else pair["user1_id"])
+                partner_is_virtual = partner_id < 0
+                now_iso = self._now()
+
+                await self.execute(
+                    queries.UPDATE_SKIP_UNTIL,
+                    (skip_until, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                if partner_is_virtual:
+                    await self.execute(
+                        queries.FINISH_VIRTUAL_AB_SESSION,
+                        (now_iso, 1, pair_id),
+                        commit=False,
+                        connection=connection,
+                    )
+                await self.execute(
+                    queries.END_PAIR_BY_ID,
+                    (now_iso, pair_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.DELETE_PENDING_RATING,
+                    (user_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                if not partner_is_virtual:
+                    await self.execute(
+                        queries.DELETE_PENDING_RATING,
+                        (partner_id,),
+                        commit=False,
+                        connection=connection,
+                    )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("searching", user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_QUEUE,
+                    (user_id, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                if not partner_is_virtual:
+                    await self.execute(
+                        queries.UPDATE_STATE,
+                        ("idle", partner_id),
+                        commit=False,
+                        connection=connection,
+                    )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (user_id, partner_id, "skip", "", now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+
+                return ChatCloseResult(
+                    pair_id=pair_id,
+                    partner_id=partner_id,
+                    partner_is_virtual=partner_is_virtual,
+                    user_feedback_pending=False,
+                    partner_feedback_pending=False,
+                )
+
+    async def report_chat_session(self, reporter_id: int, reason: str) -> ChatCloseResult | None:
+        async with self.lock:
+            async with self.transaction() as connection:
+                pair = await self.get_active_pair(reporter_id, connection=connection)
+                if not pair:
+                    return None
+
+                pair_id = int(pair["id"])
+                reported_id = int(
+                    pair["user2_id"] if int(pair["user1_id"]) == reporter_id else pair["user1_id"]
+                )
+                if reported_id < 0:
+                    return None
+
+                now_iso = self._now()
+                await self.execute(
+                    queries.INSERT_REPORT,
+                    (reporter_id, reported_id, reason, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (reporter_id, reported_id, "report", reason, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.END_PAIR_BY_ID,
+                    (now_iso, pair_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("idle", reporter_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_STATE,
+                    ("idle", reported_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.DELETE_PENDING_RATING,
+                    (reporter_id,),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.DELETE_PENDING_RATING,
+                    (reported_id,),
+                    commit=False,
+                    connection=connection,
+                )
+
+                return ChatCloseResult(
+                    pair_id=pair_id,
+                    partner_id=reported_id,
+                    partner_is_virtual=False,
+                    user_feedback_pending=False,
+                    partner_feedback_pending=False,
+                )
+
+    async def cancel_search(self, user_id: int) -> bool:
+        async with self.transaction() as connection:
+            user = await self.get_user_snapshot(user_id, connection=connection)
+            if not user or (user["state"] or "") != "searching":
+                return False
+            await self.execute(
+                queries.DELETE_QUEUE,
+                (user_id,),
+                commit=False,
+                connection=connection,
+            )
+            await self.execute(
+                queries.UPDATE_STATE,
+                ("idle", user_id),
+                commit=False,
+                connection=connection,
+            )
+            return True
 
     async def get_next_report(self) -> Optional[aiosqlite.Row]:
         return await self.fetchone(queries.SELECT_NEXT_REPORT)
@@ -659,36 +1377,167 @@ class Database:
         self,
         user_id: int,
         code: str,
-    ) -> tuple[str, int | None]:
+    ) -> PromoRedemptionResult:
         normalized = code.upper()
         async with self.lock:
-            promo = await self.fetchone(queries.SELECT_PROMO_CODE, (normalized,))
-            if not promo:
-                return "invalid", None
-            if not bool(promo["is_active"]):
-                return "inactive", None
-            if await self.has_used_promo(user_id, normalized):
-                return "used", None
-
-            usage_limit = int(promo["usage_limit"])
-            used_count = int(promo["used_count"])
-            if usage_limit > 0 and used_count >= usage_limit:
-                return "exhausted", None
-
-            assert self._conn is not None
-            try:
-                await self._conn.execute("BEGIN")
-                await self._conn.execute(
-                    queries.INSERT_PROMO_USE,
-                    (user_id, normalized, self._now()),
+            async with self.transaction() as connection:
+                promo = await self.fetchone(
+                    queries.SELECT_PROMO_CODE,
+                    (normalized,),
+                    connection=connection,
                 )
-                await self._conn.execute(queries.UPDATE_PROMO_CODE_USAGE, (normalized,))
-                await self._conn.commit()
-            except Exception:
-                await self._conn.rollback()
-                raise
+                if not promo:
+                    return PromoRedemptionResult("invalid")
+                if not bool(promo["is_active"]):
+                    return PromoRedemptionResult("inactive")
 
-            return "ok", int(promo["days"])
+                used = await self.fetchone(
+                    queries.SELECT_PROMO_USE,
+                    (user_id, normalized),
+                    connection=connection,
+                )
+                if used:
+                    return PromoRedemptionResult("used")
+
+                usage_limit = int(promo["usage_limit"])
+                used_count = int(promo["used_count"])
+                if usage_limit > 0 and used_count >= usage_limit:
+                    return PromoRedemptionResult("exhausted")
+
+                current_row = await self.fetchone(
+                    queries.SELECT_PREMIUM_UNTIL,
+                    (user_id,),
+                    connection=connection,
+                )
+                current_until = current_row["premium_until"] if current_row else ""
+                days = int(promo["days"])
+                new_until = self._extend_until(current_until, days)
+                now_iso = self._now()
+
+                await self.execute(
+                    queries.INSERT_PROMO_USE,
+                    (user_id, normalized, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_PROMO_CODE_USAGE,
+                    (normalized,),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_PREMIUM_UNTIL,
+                    (new_until, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (user_id, None, "promo", normalized, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+
+                return PromoRedemptionResult("ok", days=days, premium_until=new_until)
+
+    async def redeem_static_promo_code(self, user_id: int, code: str, days: int) -> PromoRedemptionResult:
+        normalized = code.upper()
+        async with self.lock:
+            async with self.transaction() as connection:
+                used = await self.fetchone(
+                    queries.SELECT_PROMO_USE,
+                    (user_id, normalized),
+                    connection=connection,
+                )
+                if used:
+                    return PromoRedemptionResult("used")
+
+                current_row = await self.fetchone(
+                    queries.SELECT_PREMIUM_UNTIL,
+                    (user_id,),
+                    connection=connection,
+                )
+                current_until = current_row["premium_until"] if current_row else ""
+                new_until = self._extend_until(current_until, days)
+                now_iso = self._now()
+
+                await self.execute(
+                    queries.INSERT_PROMO_USE,
+                    (user_id, normalized, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_PREMIUM_UNTIL,
+                    (new_until, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (user_id, None, "promo", normalized, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+
+                return PromoRedemptionResult("ok", days=days, premium_until=new_until)
+
+    async def activate_trial(self, user_id: int, days: int) -> PromoRedemptionResult:
+        async with self.lock:
+            async with self.transaction() as connection:
+                user = await self.get_user_snapshot(user_id, connection=connection)
+                if not user:
+                    return PromoRedemptionResult("invalid")
+                if bool(user["trial_used"]):
+                    return PromoRedemptionResult("used")
+
+                new_until = self._extend_until(user["premium_until"] or "", days)
+                now_iso = self._now()
+                await self.execute(
+                    queries.UPDATE_PREMIUM_UNTIL,
+                    (new_until, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.UPDATE_TRIAL_USED,
+                    (1, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (user_id, None, "trial", f"{days}d", now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                return PromoRedemptionResult("ok", days=days, premium_until=new_until)
+
+    async def grant_paid_premium(self, user_id: int, days: int, payload: str) -> str:
+        async with self.lock:
+            async with self.transaction() as connection:
+                current_row = await self.fetchone(
+                    queries.SELECT_PREMIUM_UNTIL,
+                    (user_id,),
+                    connection=connection,
+                )
+                current_until = current_row["premium_until"] if current_row else ""
+                new_until = self._extend_until(current_until, days)
+                now_iso = self._now()
+                await self.execute(
+                    queries.UPDATE_PREMIUM_UNTIL,
+                    (new_until, user_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.INSERT_INCIDENT,
+                    (user_id, None, "payment", payload, now_iso),
+                    commit=False,
+                    connection=connection,
+                )
+                return new_until
 
     async def set_pending_rating(self, user_id: int, pair_id: int, target_id: int) -> None:
         await self.execute(
@@ -712,35 +1561,54 @@ class Database:
             return False, None
 
         async with self.lock:
-            assert self._conn is not None
-            pending = await self.fetchone(queries.SELECT_PENDING_RATING, (rater_id,))
-            if not pending:
-                return False, None
+            async with self.transaction() as connection:
+                pending = await self.fetchone(
+                    queries.SELECT_PENDING_RATING,
+                    (rater_id,),
+                    connection=connection,
+                )
+                if not pending:
+                    return False, None
 
-            pair_id = int(pending["pair_id"])
-            target_id = int(pending["target_id"])
-            if expected_target_id is not None and target_id != expected_target_id:
-                return False, None
+                pair_id = int(pending["pair_id"])
+                target_id = int(pending["target_id"])
+                if expected_target_id is not None and target_id != expected_target_id:
+                    return False, None
 
-            exists = await self.fetchone(queries.SELECT_CHAT_FEEDBACK_EXISTS, (pair_id, rater_id))
-            if exists:
-                await self.execute(queries.DELETE_PENDING_RATING, (rater_id,))
-                return False, target_id
+                exists = await self.fetchone(
+                    queries.SELECT_CHAT_FEEDBACK_EXISTS,
+                    (pair_id, rater_id),
+                    connection=connection,
+                )
+                if exists:
+                    await self.execute(
+                        queries.DELETE_PENDING_RATING,
+                        (rater_id,),
+                        commit=False,
+                        connection=connection,
+                    )
+                    return False, target_id
 
-            try:
-                await self._conn.execute("BEGIN")
-                await self._conn.execute(
+                await self.execute(
                     queries.INSERT_CHAT_FEEDBACK,
                     (pair_id, rater_id, target_id, value, self._now()),
+                    commit=False,
+                    connection=connection,
                 )
-                await self._conn.execute(queries.INCREMENT_RATING, (value, target_id))
-                await self._conn.execute(queries.DELETE_PENDING_RATING, (rater_id,))
-                await self._conn.commit()
-            except Exception:
-                await self._conn.rollback()
-                raise
+                await self.execute(
+                    queries.INCREMENT_RATING,
+                    (value, target_id),
+                    commit=False,
+                    connection=connection,
+                )
+                await self.execute(
+                    queries.DELETE_PENDING_RATING,
+                    (rater_id,),
+                    commit=False,
+                    connection=connection,
+                )
 
-            return True, target_id
+                return True, target_id
 
     async def cleanup_media_archive(self, retention_days: int = 3, *, force: bool = False) -> None:
         deadline = self._media_cleanup_deadlines.get(retention_days, 0.0)
@@ -759,24 +1627,22 @@ class Database:
         caption: str = "",
         retention_days: int = 3,
     ) -> None:
-        assert self._conn is not None
         now_monotonic = monotonic()
         cleanup_due = now_monotonic >= self._media_cleanup_deadlines.get(retention_days, 0.0)
-        try:
-            await self._conn.execute("BEGIN")
+        async with self.transaction() as connection:
             if cleanup_due:
-                await self._conn.execute(
+                await self.execute(
                     queries.DELETE_OLD_MEDIA_ARCHIVE,
                     (self._days_ago(retention_days),),
+                    commit=False,
+                    connection=connection,
                 )
-            await self._conn.execute(
+            await self.execute(
                 queries.INSERT_MEDIA_ARCHIVE,
                 (sender_id, receiver_id, media_type, file_id, caption, self._now()),
+                commit=False,
+                connection=connection,
             )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
         if cleanup_due:
             self._media_cleanup_deadlines[retention_days] = now_monotonic + MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC
 
@@ -818,21 +1684,19 @@ class Database:
         normalized = " ".join((content or "").split()).strip()
         if not normalized:
             return
-        assert self._conn is not None
-        try:
-            await self._conn.execute("BEGIN")
-            await self._conn.execute(
+        async with self.transaction() as connection:
+            await self.execute(
                 queries.INSERT_VIRTUAL_DIALOG_MEMORY,
                 (pair_id, user_id, companion_id, speaker, normalized, self._now()),
+                commit=False,
+                connection=connection,
             )
-            await self._conn.execute(
+            await self.execute(
                 queries.DELETE_OLD_VIRTUAL_DIALOG_MEMORY,
                 (pair_id, pair_id, keep_last),
+                commit=False,
+                connection=connection,
             )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
 
     async def get_virtual_memory(self, pair_id: int, limit: int = 10) -> list[aiosqlite.Row]:
         rows = await self.fetchall(queries.SELECT_VIRTUAL_DIALOG_MEMORY, (pair_id, limit))
@@ -1021,20 +1885,17 @@ class Database:
 
     async def get_lang(self, user_id: int) -> str:
         cached = self._lang_cache.get(user_id)
-        if cached in {"ru", "en"}:
+        if cached in {"ru", "en", "uk", "de"}:
             return cached
         row = await self.fetchone(queries.SELECT_LANG, (user_id,))
         if not row:
             return "ru"
-        value = (row["lang"] or "").strip().lower()
-        normalized = value if value in {"ru", "en"} else "ru"
+        normalized = self._normalize_lang(row["lang"])
         self._lang_cache[user_id] = normalized
         return normalized
 
     async def set_lang(self, user_id: int, lang: str) -> None:
-        normalized = lang.strip().lower()
-        if normalized not in {"ru", "en"}:
-            normalized = "ru"
+        normalized = self._normalize_lang(lang)
         await self.execute(queries.UPDATE_LANG, (normalized, user_id))
         self._lang_cache[user_id] = normalized
 

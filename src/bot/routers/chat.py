@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from ...config import Config
 from ...db.database import Database
 from ..keyboards.main_menu import main_menu_keyboard
-from ..keyboards.match_menu import searching_keyboard
+from ..keyboards.match_menu import find_new_keyboard, searching_keyboard
 from ..routers.match import _attempt_match
 from ..utils.chat import (
     end_chat,
@@ -15,10 +15,20 @@ from ..utils.chat import (
     safe_edit_message_reply_markup,
     safe_send_message,
 )
+from ..utils.content_filter import contains_blocked_content
 from ..utils.constants import SKIP_COOLDOWN_SECONDS, STATE_CHATTING, STATE_IDLE, STATE_SEARCHING
 from ..utils.i18n import any_button, tr
 from ..utils.admin import is_admin
-from ..utils.users import ensure_user, format_until_text, get_active_restrictions, get_state, is_banned, is_muted
+from ..utils.users import (
+    ensure_user,
+    format_until_text,
+    get_active_restrictions_from_snapshot,
+    get_lang_from_snapshot,
+    get_state_from_snapshot,
+    get_user_snapshot,
+    is_banned_from_snapshot,
+    is_muted_from_snapshot,
+)
 from ..utils.virtual_companions import (
     build_virtual_admin_text,
     is_virtual_companion,
@@ -33,22 +43,25 @@ router = Router()
 async def end_dialog(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    state = await get_state(db, user_id)
+    state = get_state_from_snapshot(user)
     if state != STATE_CHATTING:
         await message.answer(
-            tr(lang, "Активного диалога нет.", "No active chat."),
+            tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
             reply_markup=main_menu_keyboard(
                 is_admin=is_admin(user_id, config),
                 lang=lang,
@@ -62,6 +75,8 @@ async def end_dialog(message: Message, db: Database, config: Config) -> None:
         user_id,
         reason_ru="❌ Диалог завершен.",
         reason_en="❌ Chat ended.",
+        reason_uk="❌ Діалог завершено.",
+        reason_de="❌ Chat beendet.",
     )
     await _maybe_auto_search(message, db, config, user_id)
     if partner_id:
@@ -72,22 +87,25 @@ async def end_dialog(message: Message, db: Database, config: Config) -> None:
 async def skip_partner(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
                 lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    state = await get_state(db, user_id)
+    state = get_state_from_snapshot(user)
     if state != STATE_CHATTING:
         await message.answer(
-            tr(lang, "Активного диалога нет.", "No active chat."),
+            tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
             reply_markup=main_menu_keyboard(
                 is_admin=is_admin(user_id, config),
                 lang=lang,
@@ -95,7 +113,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
         )
         return
 
-    skip_until_raw = await db.get_skip_until(user_id)
+    skip_until_raw = user["skip_until"] or ""
     if skip_until_raw:
         try:
             skip_until = datetime.fromisoformat(skip_until_raw)
@@ -109,6 +127,8 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
                         lang,
                         f"⏳ Подождите {remaining} сек перед следующим пропуском.",
                         f"⏳ Wait {remaining} sec before the next skip.",
+                        f"⏳ Зачекайте {remaining} с перед наступним пропуском.",
+                        f"⏳ Warte {remaining} Sek. vor dem nächsten Überspringen.",
                     )
                 )
                 return
@@ -116,26 +136,38 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
             pass
 
     now = datetime.now(timezone.utc)
-    await db.set_skip_until(
-        user_id, (now + timedelta(seconds=SKIP_COOLDOWN_SECONDS)).isoformat()
-    )
-
-    partner_id, pair_id = await get_partner(db, user_id)
-    await end_chat(
-        db,
-        message.bot,
+    result = await db.skip_chat_session(
         user_id,
-        notify_user=False,
-        notify_partner=True,
-        reason_ru="⏭ Собеседник пропустил диалог.",
-        reason_en="⏭ Partner skipped the chat.",
+        skip_until=(now + timedelta(seconds=SKIP_COOLDOWN_SECONDS)).isoformat(),
     )
-    if partner_id:
-        await db.add_incident(user_id, partner_id, "skip", "")
+    if result is None:
+        await message.answer(
+            tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
+            reply_markup=main_menu_keyboard(
+                is_admin=is_admin(user_id, config),
+                lang=lang,
+            ),
+        )
+        return
 
-    await db.queue_user_for_search(user_id)
+    partner_id = None if result.partner_is_virtual else result.partner_id
+    if partner_id:
+        partner_lang = await db.get_lang(partner_id)
+        await safe_send_message(
+            message.bot,
+            partner_id,
+            tr(
+                partner_lang,
+                "⏭ Собеседник пропустил диалог.",
+                "⏭ Partner skipped the chat.",
+                "⏭ Співрозмовник пропустив діалог.",
+                "⏭ Gesprächspartner hat den Chat übersprungen.",
+            ),
+            reply_markup=find_new_keyboard(partner_lang),
+        )
+
     await message.answer(
-        tr(lang, "⏳ Ищем нового...", "⏳ Looking for a new partner..."),
+        tr(lang, "⏳ Ищем нового...", "⏳ Looking for a new partner...", "⏳ Шукаємо нового...", "⏳ Suche einen neuen Gesprächspartner..."),
         reply_markup=searching_keyboard(lang),
     )
     await _attempt_match(message, db, config, user_id)
@@ -145,13 +177,14 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
 async def admin_partner_info(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
     if not is_admin(user_id, config):
         await message.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."))
         return
 
-    if await get_state(db, user_id) != STATE_CHATTING:
+    if get_state_from_snapshot(user) != STATE_CHATTING:
         await message.answer(
             tr(
                 lang,
@@ -214,13 +247,14 @@ async def admin_partner_info(message: Message, db: Database, config: Config) -> 
 async def admin_ban_partner(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
-    lang = await db.get_lang(user_id)
+    user = await get_user_snapshot(db, user_id)
+    lang = get_lang_from_snapshot(user)
 
     if not is_admin(user_id, config):
         await message.answer(tr(lang, "Недостаточно прав.", "Insufficient permissions."))
         return
 
-    if await get_state(db, user_id) != STATE_CHATTING:
+    if get_state_from_snapshot(user) != STATE_CHATTING:
         await message.answer(
             tr(
                 lang,
@@ -262,6 +296,8 @@ async def admin_ban_partner(message: Message, db: Database, config: Config) -> N
         collect_feedback=False,
         reason_ru="❌ Диалог завершен.",
         reason_en="❌ Chat ended.",
+        reason_uk="❌ Діалог завершено.",
+        reason_de="❌ Chat beendet.",
     )
     await safe_send_message(
         message.bot,
@@ -270,6 +306,8 @@ async def admin_ban_partner(message: Message, db: Database, config: Config) -> N
             partner_lang,
             "Ваш аккаунт заблокирован.",
             "Your account has been blocked.",
+            "Ваш акаунт заблоковано.",
+            "Dein Konto wurde gesperrt.",
         ),
     )
     await message.answer(
@@ -277,6 +315,8 @@ async def admin_ban_partner(message: Message, db: Database, config: Config) -> N
             lang,
             f"Пользователь {partner_id} заблокирован.",
             f"User {partner_id} has been blocked.",
+            f"Користувача {partner_id} заблоковано.",
+            f"Benutzer {partner_id} wurde gesperrt.",
         ),
         reply_markup=main_menu_keyboard(is_admin=True, lang=lang),
     )
@@ -433,36 +473,44 @@ def _message_has_media(message: Message) -> bool:
     )
 
 
+def _filterable_text(message: Message) -> str:
+    return (message.text or message.caption or "").strip()
+
+
 @router.message()
 async def relay_message(message: Message, db: Database, config: Config) -> None:
     user_id = message.from_user.id
     await ensure_user(db, user_id)
+    user = await get_user_snapshot(db, user_id)
+    user_lang = get_lang_from_snapshot(user)
 
-    if await is_banned(db, user_id):
-        lang = await db.get_lang(user_id)
+    if is_banned_from_snapshot(user):
         await message.answer(
             tr(
-                lang,
+                user_lang,
                 "Ваш аккаунт заблокирован администрацией.",
                 "Your account is blocked by administration.",
+                "Ваш акаунт заблоковано адміністрацією.",
+                "Dein Konto wurde von der Administration gesperrt.",
             )
         )
         return
 
-    state = await get_state(db, user_id)
+    state = get_state_from_snapshot(user)
     if state != STATE_CHATTING:
         # Ignore unrelated messages when not chatting.
         return
 
-    if await is_muted(db, user_id):
-        lang = await db.get_lang(user_id)
-        _, muted_until = await get_active_restrictions(db, user_id)
+    if is_muted_from_snapshot(user):
+        _, muted_until = get_active_restrictions_from_snapshot(user)
         until_text = format_until_text(muted_until)
         await message.answer(
             tr(
-                lang,
+                user_lang,
                 f"🔇 Вы в муте до {until_text}. Отправка сообщений временно недоступна.",
                 f"🔇 You are muted until {until_text}. Sending messages is temporarily disabled.",
+                f"🔇 Ви в муті до {until_text}. Надсилання повідомлень тимчасово недоступне.",
+                f"🔇 Du bist bis {until_text} stummgeschaltet. Das Senden von Nachrichten ist vorübergehend deaktiviert.",
             )
         )
         return
@@ -470,19 +518,17 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
     partner_id, pair_id = await get_partner(db, user_id)
     if not partner_id:
         await db.set_state(user_id, STATE_IDLE)
-        lang = await db.get_lang(user_id)
         await message.answer(
-            tr(lang, "Диалог не найден.", "Chat not found."),
+            tr(user_lang, "Диалог не найден.", "Chat not found.", "Діалог не знайдено.", "Chat nicht gefunden."),
             reply_markup=main_menu_keyboard(
                 is_admin=is_admin(user_id, config),
-                lang=lang,
+                lang=user_lang,
             ),
         )
         return
 
     if is_virtual_companion(partner_id):
         await _archive_media_message(db, user_id, partner_id, message)
-        user_lang = await db.get_lang(user_id)
         variant_key: str | None = None
         if pair_id:
             ab_session = await db.get_virtual_ab_session(pair_id)
@@ -521,8 +567,19 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             )
         return
 
+    partner = await db.get_user_snapshot(partner_id)
+    partner_lang = get_lang_from_snapshot(partner)
+    if partner and bool(partner["content_filter"]) and contains_blocked_content(_filterable_text(message)):
+        await message.answer(
+            tr(
+                user_lang,
+                "Сообщение заблокировано фильтром контента собеседника.",
+                "Your message was blocked by your partner's content filter.",
+            )
+        )
+        return
+
     show_sender = is_admin(partner_id, config)
-    partner_lang = await db.get_lang(partner_id)
     tag = _sender_tag(message, partner_lang) if show_sender else ""
     try:
         if message.text:
@@ -574,7 +631,6 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             )
     except (TelegramForbiddenError, TelegramBadRequest):
         # Partner is unavailable: end the chat for the sender.
-        lang = await db.get_lang(user_id)
         await end_chat(
             db,
             message.bot,
@@ -583,21 +639,24 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             collect_feedback=False,
             reason_ru="Собеседник недоступен. Попробуйте еще раз.",
             reason_en="Partner is unavailable. Please try again.",
+            reason_uk="Співрозмовник недоступний. Спробуйте ще раз.",
+            reason_de="Gesprächspartner ist nicht verfügbar. Bitte versuche es erneut.",
         )
 
 
 async def _maybe_auto_search(message: Message, db: Database, config: Config, target_user_id: int) -> None:
     if not await db.get_auto_search(target_user_id):
         return
-    if await is_banned(db, target_user_id):
+    user = await db.get_user_snapshot(target_user_id)
+    if is_banned_from_snapshot(user):
         return
 
-    state = await get_state(db, target_user_id)
+    state = get_state_from_snapshot(user)
     if state in {STATE_CHATTING, STATE_SEARCHING}:
         return
 
     await db.queue_user_for_search(target_user_id)
-    lang = await db.get_lang(target_user_id)
+    lang = get_lang_from_snapshot(user)
     await safe_send_message(
         message.bot,
         target_user_id,
