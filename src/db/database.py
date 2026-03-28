@@ -15,6 +15,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional production dependency
     asyncpg = None
 
+from .migrations import apply_migrations
 from . import queries
 
 DEFAULT_VIRTUAL_COMPANION_IDS = (-101, -102, -103, -104, -105)
@@ -75,21 +76,6 @@ INSERT INTO pairs (user1_id, user2_id, started_at, ended_at, is_active)
 VALUES (?, ?, ?, NULL, 1)
 RETURNING id
 """
-
-
-def _build_postgres_schema() -> str:
-    return (
-        queries.CREATE_TABLES.replace(
-            "INTEGER PRIMARY KEY AUTOINCREMENT",
-            "BIGSERIAL PRIMARY KEY",
-        ).replace(
-            "INTEGER PRIMARY KEY",
-            "BIGINT PRIMARY KEY",
-        )
-    )
-
-
-POSTGRES_CREATE_TABLES = _build_postgres_schema()
 
 
 @dataclass(slots=True)
@@ -163,9 +149,7 @@ class Database:
         await self._conn.execute("PRAGMA busy_timeout = 5000")
         if db_file is not None:
             await self._conn.execute("PRAGMA journal_mode = WAL")
-        await self._conn.executescript(queries.CREATE_TABLES)
-        await self._ensure_columns()
-        await self._ensure_report_columns()
+        await apply_migrations(self._conn, self._dialect)
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -185,10 +169,7 @@ class Database:
         self._pool = await asyncpg.create_pool(dsn=self.db_path, min_size=1, max_size=10)
         async with self._pool.acquire() as conn:
             async with conn.transaction():
-                for statement in self._split_sql_script(POSTGRES_CREATE_TABLES):
-                    await conn.execute(statement)
-                await self._ensure_columns(connection=conn)
-                await self._ensure_report_columns(connection=conn)
+                await apply_migrations(conn, self._dialect)
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -258,9 +239,6 @@ class Database:
         compiled = "".join(parts)
         self._compiled_query_cache[resolved] = compiled
         return compiled
-
-    def _split_sql_script(self, script: str) -> list[str]:
-        return [statement.strip() for statement in script.split(";") if statement.strip()]
 
     @asynccontextmanager
     async def transaction(self):
@@ -344,117 +322,6 @@ class Database:
         if commit and connection is None:
             await db_conn.commit()
         return result
-
-    async def _ensure_columns(self, connection: Any = None) -> None:
-        if self._is_postgres():
-            db_conn = connection
-            assert db_conn is not None
-            statements = (
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS muted_until TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS only_interest INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_used INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_search INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS content_filter INTEGER NOT NULL DEFAULT 1",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru'",
-            )
-            for statement in statements:
-                await db_conn.execute(statement)
-            return
-
-        assert self._conn is not None
-        async with self._conn.execute("PRAGMA table_info(users)") as cursor:
-            rows = await cursor.fetchall()
-        columns = {row["name"] for row in rows}
-        if "username" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''"
-            )
-        if "first_name" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT ''"
-            )
-        if "last_name" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT ''"
-            )
-        if "last_seen_at" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT ''"
-            )
-        if "banned_until" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN banned_until TEXT NOT NULL DEFAULT ''"
-            )
-        if "muted_until" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN muted_until TEXT NOT NULL DEFAULT ''"
-            )
-        if "interests" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN interests TEXT NOT NULL DEFAULT ''"
-            )
-        if "only_interest" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN only_interest INTEGER NOT NULL DEFAULT 0"
-            )
-        if "premium_until" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN premium_until TEXT NOT NULL DEFAULT ''"
-            )
-        if "trial_used" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN trial_used INTEGER NOT NULL DEFAULT 0"
-            )
-        if "skip_until" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN skip_until TEXT NOT NULL DEFAULT ''"
-            )
-        if "auto_search" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN auto_search INTEGER NOT NULL DEFAULT 0"
-            )
-        if "content_filter" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN content_filter INTEGER NOT NULL DEFAULT 1"
-            )
-        if "lang" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'ru'"
-            )
-
-    async def _ensure_report_columns(self, connection: Any = None) -> None:
-        if self._is_postgres():
-            db_conn = connection
-            assert db_conn is not None
-            statements = (
-                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new'",
-                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_at TEXT",
-                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_by BIGINT",
-            )
-            for statement in statements:
-                await db_conn.execute(statement)
-            return
-
-        assert self._conn is not None
-        async with self._conn.execute("PRAGMA table_info(reports)") as cursor:
-            rows = await cursor.fetchall()
-        columns = {row["name"] for row in rows}
-        if "status" not in columns:
-            await self._conn.execute(
-                "ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'new'"
-            )
-        if "resolved_at" not in columns:
-            await self._conn.execute("ALTER TABLE reports ADD COLUMN resolved_at TEXT")
-        if "resolved_by" not in columns:
-            await self._conn.execute("ALTER TABLE reports ADD COLUMN resolved_by INTEGER")
 
     async def fetchone(
         self,

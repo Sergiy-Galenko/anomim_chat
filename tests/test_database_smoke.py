@@ -1,5 +1,8 @@
+import sqlite3
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from src.bot.routers.chat import relay_message
@@ -119,6 +122,59 @@ class DatabaseSmokeTests(unittest.IsolatedAsyncioTestCase):
         incidents = await self.db.get_recent_incidents_for_user(1)
         promo_incidents = [row for row in incidents if row["type"] == "promo"]
         self.assertEqual(len(promo_incidents), 1)
+
+    async def test_connect_applies_legacy_schema_migrations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "legacy.db"
+            legacy_conn = sqlite3.connect(db_path)
+            legacy_conn.executescript(
+                """
+CREATE TABLE users (
+    user_id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    state TEXT NOT NULL,
+    is_banned INTEGER NOT NULL DEFAULT 0,
+    rating INTEGER NOT NULL DEFAULT 0,
+    chats_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporter_id INTEGER NOT NULL,
+    reported_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+            )
+            legacy_conn.commit()
+            legacy_conn.close()
+
+            migrated_db = Database(str(db_path))
+            await migrated_db.connect()
+            try:
+                user_columns = {
+                    row["name"] for row in await migrated_db.fetchall("PRAGMA table_info(users)")
+                }
+                report_columns = {
+                    row["name"] for row in await migrated_db.fetchall("PRAGMA table_info(reports)")
+                }
+                migration_versions = [
+                    row["version"]
+                    for row in await migrated_db.fetchall(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    )
+                ]
+
+                self.assertIn("username", user_columns)
+                self.assertIn("last_name", user_columns)
+                self.assertIn("lang", user_columns)
+                self.assertIn("status", report_columns)
+                self.assertIn("resolved_at", report_columns)
+                self.assertIn("resolved_by", report_columns)
+                self.assertEqual(migration_versions, ["0001", "0002", "0003"])
+            finally:
+                await migrated_db.close()
 
     async def test_relay_message_respects_partner_content_filter(self) -> None:
         await self._create_human_pair()

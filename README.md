@@ -16,7 +16,7 @@
 - Профиль пользователя
 - Жалобы и модерация
 - Временные баны и муты (до даты)
-- Настройки: автопоиск, фильтр контента, язык (RU/EN)
+- Настройки: автопоиск, фильтр контента, язык (RU/EN/UK/DE)
 
 ### Запуск
 1. Создать и активировать виртуальное окружение:
@@ -44,6 +44,11 @@ cp .env.example .env
 ```bash
 python -m src.main
 ```
+
+### Миграции БД
+- Схема теперь поддерживается версионируемыми миграциями в `src/db/migrations.py`.
+- При старте `Database.connect()` автоматически создаёт `schema_migrations` и применяет недостающие миграции для SQLite и PostgreSQL.
+- Для существующих SQLite/PostgreSQL баз ручные `ALTER TABLE` больше не спрятаны в коде подключения: изменения схемы должны добавляться как новая миграция.
 
 ### Deploy on Vercel
 - В репозиторий добавлен Vercel-совместимый Python webhook-handler в `api/index.py`.
@@ -99,7 +104,7 @@ Anonymous Telegram chat bot on **aiogram v3** with matchmaking, message relay, r
 - User profile
 - Reports and moderation
 - Temporary bans and mutes (until date/time)
-- Settings: auto-search, content filter, language (RU/EN)
+- Settings: auto-search, content filter, language (RU/EN/UK/DE)
 
 ### Run
 1. Create and activate a virtual environment:
@@ -128,6 +133,11 @@ If `TELEGRAM_PROXY` is empty, the bot also tries system proxy vars (`ALL_PROXY`,
 ```bash
 python -m src.main
 ```
+
+### DB Migrations
+- The schema is now managed by versioned migrations in `src/db/migrations.py`.
+- On startup, `Database.connect()` creates `schema_migrations` and applies any pending migrations for both SQLite and PostgreSQL.
+- Existing SQLite/PostgreSQL deployments no longer rely on hidden `ALTER TABLE` logic in the connection path; new schema changes should be added as a new migration.
 
 ### Deploy on Vercel
 - The repo now includes a Vercel-compatible Python webhook function in `api/index.py`.
