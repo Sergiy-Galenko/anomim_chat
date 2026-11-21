@@ -137,6 +137,7 @@ async def successful_payment(message: Message, db: Database) -> None:
         message.from_user.id,
         days,
         f"{payload}|{payment.total_amount}|{payment.currency}",
+        charge_id=payment.telegram_payment_charge_id,
     )
     lang = await db.get_lang(message.from_user.id)
 

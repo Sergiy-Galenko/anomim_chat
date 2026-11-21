@@ -45,10 +45,18 @@ cp .env.example .env
 python -m src.main
 ```
 
+В режиме polling очередь автоматически проверяется каждые 5 секунд, в том числе после
+перезапуска. После 45 секунд ожидания обычный поиск расширяет критерии; Premium-режим
+«только с интересом» сохраняет ограничение. Повторное нажатие поиска также запускает подбор.
+
+
 ### Миграции БД
 - Схема теперь поддерживается версионируемыми миграциями в `src/db/migrations.py`.
 - При старте `Database.connect()` автоматически создаёт `schema_migrations` и применяет недостающие миграции для SQLite и PostgreSQL.
 - Для существующих SQLite/PostgreSQL баз ручные `ALTER TABLE` больше не спрятаны в коде подключения: изменения схемы должны добавляться как новая миграция.
+- Миграция `0004` расширяет ссылки на пользователей и диалоги PostgreSQL до `BIGINT`;
+  `0005` добавляет учёт платежей по уникальному Telegram charge ID. Они применяются
+  автоматически при следующем запуске. Старые кнопки оценки без ID диалога отклоняются.
 
 ### Deploy on Vercel
 - В репозиторий добавлен Vercel-совместимый Python webhook-handler в `api/index.py`.
@@ -134,10 +142,20 @@ If `TELEGRAM_PROXY` is empty, the bot also tries system proxy vars (`ALL_PROXY`,
 python -m src.main
 ```
 
+In polling mode, pending searches are retried every 5 seconds, including after restarts.
+Normal searches broaden their criteria after 45 seconds; Premium interest-only searches
+keep that restriction. Pressing the search button again also retries matching.
+The periodic worker is started by `src.main`; webhook-only deployments need a separate
+scheduled worker invoking `retry_pending_matches` from `src.match_worker`.
+
+
 ### DB Migrations
 - The schema is now managed by versioned migrations in `src/db/migrations.py`.
 - On startup, `Database.connect()` creates `schema_migrations` and applies any pending migrations for both SQLite and PostgreSQL.
 - Existing SQLite/PostgreSQL deployments no longer rely on hidden `ALTER TABLE` logic in the connection path; new schema changes should be added as a new migration.
+- Migration `0004` widens PostgreSQL user/chat references to `BIGINT`; `0005` adds a
+  payment ledger keyed by Telegram charge ID. Both run automatically on the next startup.
+  Legacy rating buttons without a chat ID are rejected.
 
 ### Deploy on Vercel
 - The repo now includes a Vercel-compatible Python webhook function in `api/index.py`.
@@ -185,4 +203,12 @@ git pull
 ### Tests
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+The default test command runs the SQLite and handler regression tests. PostgreSQL
+integration tests require an explicitly configured test server and create/remove only
+their own randomly named schemas:
+
+```bash
+ANOMIM_TEST_POSTGRES_DSN=postgresql://localhost/ghostchat_test python3 -m unittest discover -s tests -v
 ```

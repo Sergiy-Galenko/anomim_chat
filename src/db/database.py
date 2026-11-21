@@ -24,6 +24,9 @@ DEFAULT_VIRTUAL_AB_VARIANTS = ("spark", "soft", "bold")
 USER_CONTEXT_TOUCH_INTERVAL_SEC = 30.0
 MEDIA_ARCHIVE_CLEANUP_INTERVAL_SEC = 3600.0
 MATCH_CANDIDATES_LIMIT = 64
+# Transaction-scoped, shared by every process connected to this database.
+# Only short database workflows hold it; Telegram/network calls happen outside.
+POSTGRES_WORKFLOW_LOCK = 0x47484F5354434841
 
 POSTGRES_QUERY_OVERRIDES = {
     queries.INSERT_USER: """
@@ -168,7 +171,8 @@ class Database:
         self._dialect = "postgres"
         self._pool = await asyncpg.create_pool(dsn=self.db_path, min_size=1, max_size=10)
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
+            async with conn.transaction(isolation="read_committed"):
+                await conn.execute("SELECT pg_advisory_xact_lock($1)", POSTGRES_WORKFLOW_LOCK)
                 await apply_migrations(conn, self._dialect)
 
     def _now(self) -> str:
@@ -245,20 +249,29 @@ class Database:
         if self._is_postgres():
             assert self._pool is not None
             async with self._pool.acquire() as connection:
-                async with connection.transaction():
+                async with connection.transaction(isolation="read_committed"):
+                    await connection.execute("SELECT pg_advisory_xact_lock($1)", POSTGRES_WORKFLOW_LOCK)
                     yield connection
             return
 
         assert self._conn is not None
         async with self._transaction_lock:
-            await self._conn.execute("BEGIN")
             try:
+                await self._conn.execute("BEGIN IMMEDIATE")
                 yield self._conn
-            except Exception:
+                await self._conn.commit()
+            except BaseException:
                 await self._conn.rollback()
                 raise
-            else:
-                await self._conn.commit()
+
+    @asynccontextmanager
+    async def _sqlite_connection(self, connection: Any = None):
+        if connection is not None:
+            yield connection
+            return
+        async with self._transaction_lock:
+            assert self._conn is not None
+            yield self._conn
 
     async def _fetchone_impl(
         self,
@@ -275,10 +288,9 @@ class Database:
             async with self._pool.acquire() as db_conn:
                 return await db_conn.fetchrow(compiled, *params)
 
-        db_conn = connection or self._conn
-        assert db_conn is not None
-        async with db_conn.execute(query, params) as cursor:
-            return await cursor.fetchone()
+        async with self._sqlite_connection(connection) as db_conn:
+            async with db_conn.execute(query, params) as cursor:
+                return await cursor.fetchone()
 
     async def _fetchall_impl(
         self,
@@ -295,10 +307,9 @@ class Database:
             async with self._pool.acquire() as db_conn:
                 return list(await db_conn.fetch(compiled, *params))
 
-        db_conn = connection or self._conn
-        assert db_conn is not None
-        async with db_conn.execute(query, params) as cursor:
-            return await cursor.fetchall()
+        async with self._sqlite_connection(connection) as db_conn:
+            async with db_conn.execute(query, params) as cursor:
+                return await cursor.fetchall()
 
     async def _execute_impl(
         self,
@@ -316,12 +327,18 @@ class Database:
             async with self._pool.acquire() as db_conn:
                 return await db_conn.execute(compiled, *params)
 
-        db_conn = connection or self._conn
-        assert db_conn is not None
-        result = await db_conn.execute(query, params)
-        if commit and connection is None:
-            await db_conn.commit()
-        return result
+        if connection is None and not commit:
+            raise ValueError("commit=False requires an explicit transaction connection")
+        async with self._sqlite_connection(connection) as db_conn:
+            try:
+                result = await db_conn.execute(query, params)
+                if connection is None:
+                    await db_conn.commit()
+                return result
+            except BaseException:
+                if connection is None:
+                    await db_conn.rollback()
+                raise
 
     async def fetchone(
         self,
@@ -472,9 +489,16 @@ class Database:
     async def remove_from_queue(self, user_id: int) -> None:
         await self.execute(queries.DELETE_QUEUE, (user_id,))
 
-    async def queue_user_for_search(self, user_id: int) -> None:
+    async def queue_user_for_search(self, user_id: int) -> bool:
         joined_at = self._now()
         async with self.transaction() as connection:
+            user = await self.get_user_snapshot(user_id, connection=connection)
+            if (
+                not user or user["state"] != "idle" or bool(user["is_banned"])
+                or self._is_active_until(user["banned_until"] or "")
+                or await self.get_active_pair(user_id, connection=connection)
+            ):
+                return False
             await self.execute(
                 queries.UPDATE_STATE,
                 ("searching", user_id),
@@ -487,10 +511,18 @@ class Database:
                 commit=False,
                 connection=connection,
             )
+            return True
 
     async def get_queue_size(self) -> int:
         row = await self.fetchone(queries.SELECT_QUEUE_SIZE)
         return int(row["count"]) if row else 0
+
+    async def get_searching_user_ids(self, *, after_user_id: int = 0, limit: int = 100) -> list[int]:
+        rows = await self.fetchall(
+            queries.SELECT_SEARCHING_USER_IDS,
+            (after_user_id, self._now(), limit),
+        )
+        return [int(row["user_id"]) for row in rows]
 
     async def get_queue_joined_at(self, user_id: int) -> str:
         row = await self.fetchone(queries.SELECT_QUEUE_JOINED_AT, (user_id,))
@@ -612,12 +644,16 @@ class Database:
             return pair_id
 
     async def finalize_match(self, user_id: int, partner_id: int, *, is_virtual: bool) -> MatchCommitResult | None:
+        if user_id == partner_id:
+            return None
         async with self.lock:
             async with self.transaction() as connection:
                 user = await self.get_user_snapshot(user_id, connection=connection)
                 if not user or (user["state"] or "") != "searching" or not (user["joined_at"] or ""):
                     return None
                 if bool(user["is_banned"]) or self._is_active_until(user["banned_until"] or ""):
+                    return None
+                if await self.get_active_pair(user_id, connection=connection):
                     return None
 
                 if is_virtual:
@@ -650,6 +686,8 @@ class Database:
                     or bool(partner["is_banned"])
                     or self._is_active_until(partner["banned_until"] or "")
                 ):
+                    return None
+                if await self.get_active_pair(partner_id, connection=connection):
                     return None
 
                 await self.execute(
@@ -867,18 +905,20 @@ class Database:
                     partner_feedback_pending=False,
                 )
 
-    async def report_chat_session(self, reporter_id: int, reason: str) -> ChatCloseResult | None:
+    async def report_chat_session(
+        self, reporter_id: int, reason: str, *, expected_pair_id: int, expected_partner_id: int
+    ) -> ChatCloseResult | None:
         async with self.lock:
             async with self.transaction() as connection:
                 pair = await self.get_active_pair(reporter_id, connection=connection)
-                if not pair:
+                if not pair or int(pair["id"]) != expected_pair_id:
                     return None
 
                 pair_id = int(pair["id"])
                 reported_id = int(
                     pair["user2_id"] if int(pair["user1_id"]) == reporter_id else pair["user1_id"]
                 )
-                if reported_id < 0:
+                if reported_id < 0 or reported_id != expected_partner_id:
                     return None
 
                 now_iso = self._now()
@@ -1381,9 +1421,20 @@ class Database:
                 )
                 return PromoRedemptionResult("ok", days=days, premium_until=new_until)
 
-    async def grant_paid_premium(self, user_id: int, days: int, payload: str) -> str:
+    async def grant_paid_premium(
+        self, user_id: int, days: int, payload: str, *, charge_id: str
+    ) -> str:
+        if not charge_id or days <= 0:
+            raise ValueError("A payment requires a charge ID and a positive duration")
         async with self.lock:
             async with self.transaction() as connection:
+                payment = await self.fetchone(
+                    queries.SELECT_PAYMENT, (charge_id,), connection=connection
+                )
+                if payment:
+                    if int(payment["user_id"]) != user_id or int(payment["days"]) != days:
+                        raise ValueError("Charge ID already belongs to another payment")
+                    return payment["premium_until"]
                 current_row = await self.fetchone(
                     queries.SELECT_PREMIUM_UNTIL,
                     (user_id,),
@@ -1392,6 +1443,11 @@ class Database:
                 current_until = current_row["premium_until"] if current_row else ""
                 new_until = self._extend_until(current_until, days)
                 now_iso = self._now()
+                await self.execute(
+                    queries.INSERT_PAYMENT,
+                    (charge_id, user_id, days, payload, new_until, now_iso),
+                    connection=connection, commit=False,
+                )
                 await self.execute(
                     queries.UPDATE_PREMIUM_UNTIL,
                     (new_until, user_id),
@@ -1422,7 +1478,8 @@ class Database:
         await self.execute(queries.DELETE_PENDING_RATING, (user_id,))
 
     async def submit_rating(
-        self, rater_id: int, value: int, expected_target_id: int | None = None
+        self, rater_id: int, value: int, *, expected_pair_id: int,
+        expected_target_id: int | None = None,
     ) -> tuple[bool, int | None]:
         if value not in (-1, 1):
             return False, None
@@ -1439,6 +1496,8 @@ class Database:
 
                 pair_id = int(pending["pair_id"])
                 target_id = int(pending["target_id"])
+                if pair_id != expected_pair_id:
+                    return False, None
                 if expected_target_id is not None and target_id != expected_target_id:
                     return False, None
 

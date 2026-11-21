@@ -93,7 +93,7 @@ async def end_chat(
                     "Оцініть співрозмовника:",
                     "Bewerte deinen Gesprächspartner:",
                 ),
-                reply_markup=rating_keyboard(),
+                reply_markup=rating_keyboard(result.pair_id),
             )
     if notify_partner and not partner_is_virtual:
         partner_lang = await db.get_lang(partner_id)
@@ -114,7 +114,7 @@ async def end_chat(
                     "Оцініть співрозмовника:",
                     "Bewerte deinen Gesprächspartner:",
                 ),
-                reply_markup=rating_keyboard(),
+                reply_markup=rating_keyboard(result.pair_id),
             )
 
     return None if partner_is_virtual else partner_id

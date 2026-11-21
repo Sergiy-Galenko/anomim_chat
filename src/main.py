@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import warnings
+from contextlib import suppress
 from pathlib import Path
 
 warnings.filterwarnings(
@@ -19,13 +20,16 @@ if __name__ == "__main__" and __package__ in (None, ""):
     __package__ = "src"
 
 from .bootstrap import ProxyConfigurationError, create_app_context, shutdown_app_context
+from .match_worker import run_match_worker
 
 
 async def main() -> None:
     app = None
+    match_worker = None
     try:
         app = await create_app_context()
         await app.bot.delete_webhook(drop_pending_updates=False)
+        match_worker = asyncio.create_task(run_match_worker(app.bot, app.db, app.config))
         await app.dp.start_polling(app.bot)
     except ProxyConfigurationError as exc:
         logging.error("%s", exc)
@@ -45,6 +49,10 @@ async def main() -> None:
             )
         raise SystemExit(1) from exc
     finally:
+        if match_worker is not None:
+            match_worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await match_worker
         if app is not None:
             await shutdown_app_context(app)
 

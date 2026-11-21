@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,7 +60,7 @@ def _split_sql_script(script: str) -> list[str]:
 
 
 def build_postgres_schema(sqlite_schema: str) -> str:
-    return (
+    schema = (
         sqlite_schema.replace(
             "INTEGER PRIMARY KEY AUTOINCREMENT",
             "BIGSERIAL PRIMARY KEY",
@@ -68,6 +69,7 @@ def build_postgres_schema(sqlite_schema: str) -> str:
             "BIGINT PRIMARY KEY",
         )
     )
+    return re.sub(r"\b(\w+_id|created_by|resolved_by) INTEGER\b", r"\1 BIGINT", schema)
 
 
 async def _apply_sqlite_script(connection: Any, script: str) -> None:
@@ -137,6 +139,43 @@ async def _apply_report_columns_postgres(connection: Any) -> None:
     await connection.execute(REPORT_STATUS_INDEX_SQL)
 
 
+async def _apply_bigint_ids_sqlite(connection: Any) -> None:
+    # SQLite INTEGER already supports signed 64-bit values.
+    pass
+
+
+async def _apply_bigint_ids_postgres(connection: Any) -> None:
+    columns_by_table = {
+        "pairs": ("user1_id", "user2_id"),
+        "reports": ("reporter_id", "reported_id", "resolved_by"),
+        "incidents": ("actor_id", "target_id"),
+        "promo_uses": ("user_id",),
+        "promo_codes": ("created_by",),
+        "pending_ratings": ("pair_id", "target_id"),
+        "chat_feedback": ("pair_id", "rater_id", "target_id"),
+        "media_archive": ("sender_id", "receiver_id"),
+        "virtual_dialog_memory": ("pair_id", "user_id", "companion_id"),
+        "virtual_ab_sessions": ("user_id", "companion_id"),
+        "broadcasts": ("created_by",),
+    }
+    for table, columns in columns_by_table.items():
+        alterations = ", ".join(f"ALTER COLUMN {column} TYPE BIGINT" for column in columns)
+        await connection.execute(f"ALTER TABLE {table} {alterations}")
+
+
+async def _apply_payments(connection: Any) -> None:
+    await connection.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            charge_id TEXT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            days INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            premium_until TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         version="0001",
@@ -155,6 +194,18 @@ MIGRATIONS: tuple[Migration, ...] = (
         description="reports_resolution_fields",
         apply_sqlite=_apply_report_columns_sqlite,
         apply_postgres=_apply_report_columns_postgres,
+    ),
+    Migration(
+        version="0004",
+        description="bigint_user_and_pair_references",
+        apply_sqlite=_apply_bigint_ids_sqlite,
+        apply_postgres=_apply_bigint_ids_postgres,
+    ),
+    Migration(
+        version="0005",
+        description="deduplicate_telegram_payments",
+        apply_sqlite=_apply_payments,
+        apply_postgres=_apply_payments,
     ),
 )
 

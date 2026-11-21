@@ -170,7 +170,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
         tr(lang, "⏳ Ищем нового...", "⏳ Looking for a new partner...", "⏳ Шукаємо нового...", "⏳ Suche einen neuen Gesprächspartner..."),
         reply_markup=searching_keyboard(lang),
     )
-    await _attempt_match(message, db, config, user_id)
+    await _attempt_match(message.bot, db, config, user_id)
 
 
 @router.message(F.text.in_(any_button("admin_partner_info")))
@@ -323,14 +323,17 @@ async def admin_ban_partner(message: Message, db: Database, config: Config) -> N
     await db.add_incident(user_id, partner_id, "ban_partner", "")
 
 
-@router.callback_query(F.data.in_({"rate:up", "rate:down"}))
+@router.callback_query(F.data.startswith("rate:"))
 async def rate_partner(callback: CallbackQuery, db: Database) -> None:
     user_id = callback.from_user.id
     await ensure_user(db, user_id)
 
-    value = 1 if callback.data == "rate:up" else -1
-    success, _ = await db.submit_rating(user_id, value)
     lang = await db.get_lang(user_id)
+    parts = (callback.data or "").split(":")
+    success = False
+    if len(parts) == 3 and parts[1].isdigit() and parts[2] in {"up", "down"}:
+        value = 1 if parts[2] == "up" else -1
+        success, _ = await db.submit_rating(user_id, value, expected_pair_id=int(parts[1]))
 
     if not success:
         await callback.answer(
@@ -479,6 +482,8 @@ def _filterable_text(message: Message) -> str:
 
 @router.message()
 async def relay_message(message: Message, db: Database, config: Config) -> None:
+    if message.chat.type != "private" or message.from_user is None:
+        return
     user_id = message.from_user.id
     await ensure_user(db, user_id)
     user = await get_user_snapshot(db, user_id)
@@ -655,7 +660,8 @@ async def _maybe_auto_search(message: Message, db: Database, config: Config, tar
     if state in {STATE_CHATTING, STATE_SEARCHING}:
         return
 
-    await db.queue_user_for_search(target_user_id)
+    if not await db.queue_user_for_search(target_user_id):
+        return
     lang = get_lang_from_snapshot(user)
     await safe_send_message(
         message.bot,
@@ -667,4 +673,4 @@ async def _maybe_auto_search(message: Message, db: Database, config: Config, tar
         ),
         reply_markup=searching_keyboard(lang),
     )
-    await _attempt_match(message, db, config, target_user_id)
+    await _attempt_match(message.bot, db, config, target_user_id)

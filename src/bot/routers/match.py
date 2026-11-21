@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.types import Message
 
 from ...config import Config
@@ -76,6 +76,8 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
         return
 
     if state == STATE_SEARCHING:
+        if await _attempt_match(message.bot, db, config, user_id):
+            return
         status_text = await _search_status_text(db, user_id, lang)
         await message.answer(
             tr(
@@ -89,7 +91,8 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
         )
         return
 
-    await db.queue_user_for_search(user_id)
+    if not await db.queue_user_for_search(user_id):
+        return
     status_text = await _search_status_text(db, user_id, lang)
     await message.answer(
         tr(
@@ -102,10 +105,10 @@ async def find_partner(message: Message, db: Database, config: Config) -> None:
         reply_markup=searching_keyboard(lang),
     )
 
-    await _attempt_match(message, db, config, user_id)
+    await _attempt_match(message.bot, db, config, user_id)
 
 
-async def _attempt_match(message: Message, db: Database, config: Config, user_id: int) -> bool:
+async def _attempt_match(bot: Bot, db: Database, config: Config, user_id: int) -> bool:
     user = await db.get_user_snapshot(user_id)
     if not user or (user["state"] or "") != STATE_SEARCHING:
         return False
@@ -166,7 +169,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             variant_key=variant_key,
         )
         sent_user = await safe_send_message(
-            message.bot,
+            bot,
             user_id,
             build_virtual_match_text(user_lang),
             reply_markup=main_menu_keyboard(
@@ -178,7 +181,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
         if not sent_user:
             await end_chat(
                 db,
-                message.bot,
+                bot,
                 user_id,
                 collect_feedback=False,
                 reason_ru="Собеседник недоступен. Попробуйте еще раз.",
@@ -194,7 +197,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
             user_lang,
             variant_key=variant_key,
         )
-        await safe_send_message(message.bot, user_id, intro_text)
+        await safe_send_message(bot, user_id, intro_text)
         await db.increment_virtual_ab_companion_message(commit.pair_id)
         await db.add_virtual_memory(
             pair_id=commit.pair_id,
@@ -209,7 +212,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
     candidate = await db.get_user_snapshot(candidate_id)
     candidate_lang = get_lang_from_snapshot(candidate)
     sent_user = await safe_send_message(
-        message.bot,
+        bot,
         user_id,
         tr(
             user_lang,
@@ -223,7 +226,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
         ),
     )
     sent_candidate = await safe_send_message(
-        message.bot,
+        bot,
         candidate_id,
         tr(
             candidate_lang,
@@ -240,7 +243,7 @@ async def _attempt_match(message: Message, db: Database, config: Config, user_id
     if not sent_user or not sent_candidate:
         await end_chat(
             db,
-            message.bot,
+            bot,
             user_id if sent_user else candidate_id,
             collect_feedback=False,
             reason_ru="Собеседник недоступен. Попробуйте еще раз.",

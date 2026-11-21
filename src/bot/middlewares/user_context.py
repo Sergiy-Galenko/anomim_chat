@@ -17,6 +17,16 @@ class UserContextMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
+        # Chat sessions belong to private conversations with the bot. Do not
+        # let group messages or group callbacks read/change those sessions.
+        message = getattr(event, "message", None)
+        callback = getattr(event, "callback_query", None)
+        if callback is not None:
+            message = callback.message
+        if message is None:
+            message = getattr(event, "edited_message", None)
+        if message is not None and message.chat.type != "private":
+            return None
         user = self._resolve_user(event, data)
         if user is not None:
             await self.db.touch_user_context(

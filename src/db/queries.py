@@ -209,6 +209,17 @@ UPDATE_LANG = "UPDATE users SET lang = ? WHERE user_id = ?"
 INSERT_QUEUE = "INSERT OR REPLACE INTO queue (user_id, joined_at) VALUES (?, ?)"
 DELETE_QUEUE = "DELETE FROM queue WHERE user_id = ?"
 SELECT_QUEUE_SIZE = "SELECT COUNT(*) AS count FROM queue"
+SELECT_SEARCHING_USER_IDS = """
+SELECT q.user_id FROM queue q JOIN users u ON u.user_id = q.user_id
+WHERE q.user_id > ? AND u.state = 'searching' AND u.is_banned = 0
+  AND (u.banned_until = '' OR u.banned_until <= ?)
+ORDER BY q.user_id LIMIT ?
+"""
+SELECT_PAYMENT = "SELECT * FROM payments WHERE charge_id = ?"
+INSERT_PAYMENT = """
+INSERT INTO payments (charge_id, user_id, days, payload, premium_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
 SELECT_QUEUE_JOINED_AT = "SELECT joined_at FROM queue WHERE user_id = ?"
 SELECT_QUEUE_POSITION = """
 SELECT COUNT(*) + 1 AS pos

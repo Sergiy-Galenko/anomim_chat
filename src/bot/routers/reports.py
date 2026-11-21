@@ -68,7 +68,9 @@ async def start_report(
         )
         return
 
-    partner_id, _ = await get_partner(db, user_id)
+    partner_id, pair_id = await get_partner(db, user_id)
+    if partner_id is None or pair_id is None:
+        return
     if partner_id and is_virtual_companion(partner_id):
         await message.answer(
             tr(
@@ -87,7 +89,7 @@ async def start_report(
         return
 
     await state.set_state(ReportStates.waiting_reason)
-    await state.update_data(lang=lang)
+    await state.update_data(lang=lang, report_pair_id=pair_id, report_partner_id=partner_id)
     await message.answer(
         tr(lang, "Выберите причину жалобы:", "Choose a report reason:", "Оберіть причину скарги:", "Wähle einen Meldungsgrund:"),
         reply_markup=report_keyboard(lang),
@@ -116,12 +118,16 @@ async def handle_report_reason(
         )
         return
 
-    partner_id, _ = await get_partner(db, user_id)
-    if not partner_id:
+    partner_id, pair_id = await get_partner(db, user_id)
+    if (
+        not partner_id or pair_id != data.get("report_pair_id")
+        or partner_id != data.get("report_partner_id")
+    ):
         await state.clear()
         await message.answer(
             tr(lang, "Диалог уже завершен.", "Chat already ended.", "Діалог уже завершено.", "Der Chat wurde bereits beendet."),
             reply_markup=main_menu_keyboard(
+                show_end=bool(partner_id),
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -145,7 +151,11 @@ async def handle_report_reason(
         )
         return
 
-    result = await db.report_chat_session(user_id, reason_code)
+    result = await db.report_chat_session(
+        user_id, reason_code,
+        expected_pair_id=data["report_pair_id"],
+        expected_partner_id=data["report_partner_id"],
+    )
     if result is None:
         await state.clear()
         await message.answer(
