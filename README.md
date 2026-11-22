@@ -226,8 +226,6 @@ ANOMIM_TEST_POSTGRES_DSN=postgresql://localhost/ghostchat_test python3 -m unitte
 
 Парсер працює окремо від Telegram-бота, без `TOKEN` та додаткових залежностей
 (Python 3.12). Джерела задаються в `config/competitor_sources.json`:
-назва та HTTPS-адреса сторінки. Початковий набір містить чотири сайти та три
-публічні сторінки Telegram-ботів. Список завантажується при запуску; після
 його редагування перезапустіть worker.
 
 Одноразова перевірка:

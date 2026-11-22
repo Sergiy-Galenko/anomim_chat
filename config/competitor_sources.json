@@ -1,9 +1,46 @@
 [
-  {"name": "Anonity", "url": "https://anonity.chat/"},
-  {"name": "Duofield", "url": "https://duofield.com/"},
-  {"name": "Emerald Chat", "url": "https://emeraldchat.com/"},
-  {"name": "RandomStrangers", "url": "https://randomstrangers.chat/text-chat"},
-  {"name": "Anonity Telegram", "url": "https://t.me/AnonityChatBot"},
-  {"name": "Duofield Telegram", "url": "https://t.me/duofield_chat_bot"},
-  {"name": "AnonChat Telegram", "url": "https://t.me/anonchat_appbot"}
+  {
+    "name": "Anonity",
+    "url": "https://anonity.chat/"
+  },
+  {
+    "name": "Duofield",
+    "url": "https://duofield.com/"
+  },
+  {
+    "name": "Emerald Chat",
+    "url": "https://emeraldchat.com/"
+  },
+  {
+    "name": "RandomStrangers",
+    "url": "https://randomstrangers.chat/text-chat"
+  },
+  {
+    "name": "Anonity Telegram",
+    "url": "https://t.me/AnonityChatBot"
+  },
+  {
+    "name": "Duofield Telegram",
+    "url": "https://t.me/duofield_chat_bot"
+  },
+  {
+    "name": "AnonChat Telegram",
+    "url": "https://t.me/anonchat_appbot"
+  },
+  {
+    "name": "Anonimy Chat Telegram",
+    "url": "https://t.me/Anonimy_Chat_Bot"
+  },
+  {
+    "name": "Nekto.me",
+    "url": "https://nekto.me/chat/"
+  },
+  {
+    "name": "Anonymous Chat Telegram",
+    "url": "https://t.me/chatbot"
+  },
+  {
+    "name": "Anonymous Chats Telegram",
+    "url": "https://t.me/anonbot"
+  }
 ]
