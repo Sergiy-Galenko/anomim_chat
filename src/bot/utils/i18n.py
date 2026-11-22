@@ -1,4 +1,10 @@
 BUTTON_TEXTS: dict[str, dict[str, str]] = {
+    "back_to_chat": {
+        "ru": "💬 Вернуться в диалог",
+        "en": "💬 Back to Chat",
+        "uk": "💬 Повернутися до розмови",
+        "de": "💬 Zurück zum Chat",
+    },
     "find_partner": {
         "ru": "🔍 Найти собеседника",
         "en": "🔍 Find Partner",

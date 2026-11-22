@@ -114,6 +114,14 @@ Anonymous Telegram chat bot on **aiogram v3** with matchmaking, message relay, r
 - Temporary bans and mutes (until date/time)
 - Settings: auto-search, content filter, language (RU/EN/UK/DE)
 
+### Chat navigation
+- During a conversation, the keyboard shows Skip, End Chat, Report, and Menu in two rows.
+- Menu and `/menu` keep the current conversation active; Back to Chat restores its controls.
+- During search, navigation keeps Cancel Search visible. Messages sent before matching receive a delivery explanation.
+- Back to Chat exits the report form without submitting a report.
+- Language changes immediately refresh the reply keyboard.
+- Explicitly ending a chat stops your session even with auto-search enabled. Auto-search still applies when your partner ends the chat.
+
 ### Run
 1. Create and activate a virtual environment:
 ```bash
@@ -212,3 +220,64 @@ their own randomly named schemas:
 ```bash
 ANOMIM_TEST_POSTGRES_DSN=postgresql://localhost/ghostchat_test python3 -m unittest discover -s tests -v
 ```
+
+
+## Регулярний парсер публічних сторінок чатів
+
+Парсер працює окремо від Telegram-бота, без `TOKEN` та додаткових залежностей
+(Python 3.12). Джерела задаються в `config/competitor_sources.json`:
+назва та HTTPS-адреса сторінки. Початковий набір містить чотири сайти та три
+публічні сторінки Telegram-ботів. Список завантажується при запуску; після
+його редагування перезапустіть worker.
+
+Одноразова перевірка:
+
+```bash
+python -m src.competitor_parser
+```
+
+Регулярна перевірка кожні 6 годин після завершення попереднього циклу:
+
+```bash
+python -m src.competitor_parser --watch --interval 21600
+```
+
+Worker працює, доки процес запущено; `Ctrl+C` завершує його коректно.
+Для постійної роботи запустіть його як окремий процес під вашим менеджером
+сервісів або використовуйте cron для одноразових запусків. Приклад cron
+(замініть абсолютний шлях до проєкту та інтерпретатора):
+
+```cron
+0 */6 * * * cd /absolute/path/anomim_chat && /absolute/path/anomim_chat/.venv/bin/python -m src.competitor_parser >> /absolute/path/anomim_chat/data/competitors.log 2>&1
+```
+
+Перед налаштуванням cron створіть каталог `data`. Використовуйте один worker
+або один запис cron на каталог результатів. Завдання cron і worker не
+встановлюються автоматично. Не запускайте нескінченний `--watch` усередині
+Vercel webhook-функції: потрібен окремий постійний worker із persistent-диском.
+
+Результати:
+
+- `data/competitors_latest.json` — остання перевірка кожного джерела: назва,
+  короткий опис, посилання на ботів, команди, згадані функції та помилки.
+- `data/competitors.sqlite3` — історія перевірок, за замовчуванням останні
+  120 записів на джерело; `--keep` змінює цей ліміт.
+- `changed: true` — витягнуті поля змінилися відносно останньої збереженої
+  успішної перевірки. Перша перевірка має `changed: false`. Зміна довільного
+  тексту сторінки поза витягнутими полями не вважається зміною.
+- `--sources`, `--db`, `--output` дозволяють змінити шляхи. Дати зберігаються
+  в UTC. База парсера відокремлена від користувацької бази бота.
+
+Парсер читає тільки вказані сторінки, не обходить усі знайдені посилання та
+не надсилає повідомлень чужим ботам. Він перевіряє `robots.txt`, дотримується
+`Crawl-delay` / `Request-rate`, робить паузу щонайменше 2 секунди між запитами
+до одного хоста й обмежує відповідь 2 МБ. Помилка одного джерела не зупиняє
+решту. HTTP 429/403 та недоступний robots.txt фіксуються як помилка без обходу
+обмежень; відсутній robots.txt (404/410) дозволяє перевірку. Міждоменні
+перенаправлення потребують указання канонічної адреси у конфігурації.
+
+`mentioned_features` означає лише згадки у публічному тексті, навіть якщо
+сторінка описує функцію як вимкнену. Це не перевірка працездатності сервісу.
+Парсер не виконує JavaScript, не читає приватних чатів, внутрішніх меню ботів
+або списків користувачів і не зберігає повний HTML. Одноразовий запуск повертає
+код 1, якщо хоча б одне джерело не оброблено; `--watch` продовжує наступні цикли.

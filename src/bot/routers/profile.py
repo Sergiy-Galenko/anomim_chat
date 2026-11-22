@@ -132,7 +132,7 @@ async def my_profile(message: Message, db: Database, config: Config) -> None:
     await message.answer(
         text,
         reply_markup=main_menu_keyboard(
-            show_end=state == STATE_CHATTING,
+            state=state,
             is_admin=is_admin(user_id, config),
             lang=lang,
         ),
@@ -198,7 +198,7 @@ async def toggle_content_filter(callback: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(F.data.startswith("settings:lang:"))
-async def set_language(callback: CallbackQuery, db: Database) -> None:
+async def set_language(callback: CallbackQuery, db: Database, config: Config) -> None:
     user_id = callback.from_user.id
     await ensure_user(db, user_id)
 
@@ -208,8 +208,21 @@ async def set_language(callback: CallbackQuery, db: Database) -> None:
         return
 
     new_lang = parts[2]
+    if new_lang not in {"ru", "en", "uk", "de"}:
+        await callback.answer()
+        return
+    current_lang = await db.get_lang(user_id)
     await db.set_lang(user_id, new_lang)
     await _refresh_settings(callback, db, user_id)
+    if callback.message and current_lang != new_lang:
+        user = await get_user_snapshot(db, user_id)
+        await callback.message.answer(
+            tr(new_lang, "Язык изменён.", "Language updated.", "Мову змінено.", "Sprache geändert."),
+            reply_markup=main_menu_keyboard(
+                state=get_state_from_snapshot(user),
+                is_admin=is_admin(user_id, config), lang=new_lang,
+            ),
+        )
     await callback.answer()
 
 
@@ -226,7 +239,7 @@ async def close_settings(callback: CallbackQuery, db: Database, config: Config) 
         await callback.message.answer(
             tr(lang, "Настройки сохранены.", "Settings saved.", "Налаштування збережено.", "Einstellungen gespeichert."),
             reply_markup=main_menu_keyboard(
-                show_end=state == STATE_CHATTING,
+                state=state,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -260,7 +273,7 @@ async def rules(message: Message, db: Database, config: Config) -> None:
     await message.answer(
         rules_text(lang),
         reply_markup=main_menu_keyboard(
-            show_end=state == STATE_CHATTING,
+            state=state,
             is_admin=is_admin(user_id, config),
             lang=lang,
         ),

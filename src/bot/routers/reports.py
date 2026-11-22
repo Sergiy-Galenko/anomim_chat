@@ -62,6 +62,7 @@ async def start_report(
                 "Eine Meldung ist nur während eines aktiven Chats verfügbar.",
             ),
             reply_markup=main_menu_keyboard(
+                state=get_state_from_snapshot(await get_user_snapshot(db, user_id)),
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -161,6 +162,7 @@ async def handle_report_reason(
         await message.answer(
             tr(lang, "Диалог уже завершен.", "Chat already ended.", "Діалог уже завершено.", "Der Chat wurde bereits beendet."),
             reply_markup=main_menu_keyboard(
+                state=get_state_from_snapshot(await get_user_snapshot(db, user_id)),
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),

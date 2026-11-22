@@ -1,6 +1,6 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-from ..utils.i18n import normalize_lang
+from ..utils.i18n import button_text, normalize_lang
 
 REPORT_REASON_CODES = ["spam", "abuse", "adult", "other"]
 REPORT_REASON_TEXTS: dict[str, dict[str, str]] = {
@@ -16,7 +16,11 @@ REPORT_REASON_TEXTS: dict[str, dict[str, str]] = {
 }
 
 def report_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    keyboard = [[KeyboardButton(text=report_reason_label(code, lang))] for code in REPORT_REASON_CODES]
+    keyboard = [
+        [KeyboardButton(text=report_reason_label(code, lang)) for code in REPORT_REASON_CODES[:2]],
+        [KeyboardButton(text=report_reason_label(code, lang)) for code in REPORT_REASON_CODES[2:]],
+        [KeyboardButton(text=button_text("back_to_chat", lang))],
+    ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 

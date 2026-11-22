@@ -60,7 +60,7 @@ async def premium_info(message: Message, db: Database, config: Config) -> None:
             "Wähle unten eine Aktion oder kehre ins Menü zurück.",
         ),
         reply_markup=main_menu_keyboard(
-            show_end=state == STATE_CHATTING,
+            state=state,
             is_admin=is_admin(user_id, config),
             lang=lang,
         ),

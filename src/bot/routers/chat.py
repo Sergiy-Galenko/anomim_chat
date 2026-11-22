@@ -63,6 +63,7 @@ async def end_dialog(message: Message, db: Database, config: Config) -> None:
         await message.answer(
             tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
             reply_markup=main_menu_keyboard(
+                state=state,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -78,7 +79,7 @@ async def end_dialog(message: Message, db: Database, config: Config) -> None:
         reason_uk="❌ Діалог завершено.",
         reason_de="❌ Chat beendet.",
     )
-    await _maybe_auto_search(message, db, config, user_id)
+    # An explicit stop must let the user leave, even with auto-search enabled.
     if partner_id:
         await _maybe_auto_search(message, db, config, partner_id)
 
@@ -107,6 +108,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
         await message.answer(
             tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
             reply_markup=main_menu_keyboard(
+                state=state,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -144,6 +146,7 @@ async def skip_partner(message: Message, db: Database, config: Config) -> None:
         await message.answer(
             tr(lang, "Активного диалога нет.", "No active chat.", "Активного діалогу немає.", "Kein aktiver Chat."),
             reply_markup=main_menu_keyboard(
+                state=state,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
@@ -337,7 +340,7 @@ async def rate_partner(callback: CallbackQuery, db: Database) -> None:
 
     if not success:
         await callback.answer(
-            tr(lang, "Оценка уже выставлена или недоступна.", "Rating is no longer available."),
+            tr(lang, "Оценка уже выставлена или недоступна.", "Rating is no longer available.", "Оцінку вже виставлено або вона недоступна.", "Die Bewertung ist nicht mehr verfügbar."),
             show_alert=True,
         )
         return
@@ -345,10 +348,10 @@ async def rate_partner(callback: CallbackQuery, db: Database) -> None:
     if callback.message:
         await safe_edit_message_reply_markup(callback.message, reply_markup=None)
 
-    await callback.answer(tr(lang, "Оценка сохранена.", "Rating saved."))
+    await callback.answer(tr(lang, "Оценка сохранена.", "Rating saved.", "Оцінку збережено.", "Bewertung gespeichert."))
     if callback.message:
         await callback.message.answer(
-            tr(lang, "Спасибо за отзыв.", "Thanks for your feedback.")
+            tr(lang, "Спасибо за отзыв.", "Thanks for your feedback.", "Дякуємо за відгук.", "Danke für dein Feedback.")
         )
 
 
@@ -503,7 +506,13 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
 
     state = get_state_from_snapshot(user)
     if state != STATE_CHATTING:
-        # Ignore unrelated messages when not chatting.
+        text = tr(user_lang,
+            "⏳ Поиск продолжается. Сообщение не отправлено." if state == STATE_SEARCHING else "Чтобы отправить сообщение, сначала найдите собеседника.",
+            "⏳ Still searching. Your message was not sent." if state == STATE_SEARCHING else "Find a partner first to send a message.",
+            "⏳ Пошук триває. Повідомлення не надіслано." if state == STATE_SEARCHING else "Щоб надіслати повідомлення, спочатку знайдіть співрозмовника.",
+            "⏳ Die Suche läuft. Nachricht nicht gesendet." if state == STATE_SEARCHING else "Finde zuerst einen Gesprächspartner, um eine Nachricht zu senden.")
+        await message.answer(text, reply_markup=main_menu_keyboard(
+            state=state, lang=user_lang, is_admin=is_admin(user_id, config)))
         return
 
     if is_muted_from_snapshot(user):
@@ -580,6 +589,8 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
                 user_lang,
                 "Сообщение заблокировано фильтром контента собеседника.",
                 "Your message was blocked by your partner's content filter.",
+                "Ваше повідомлення заблоковано фільтром контенту співрозмовника.",
+                "Deine Nachricht wurde vom Inhaltsfilter deines Gesprächspartners blockiert.",
             )
         )
         return
@@ -630,10 +641,11 @@ async def relay_message(message: Message, db: Database, config: Config) -> None:
             )
             await _archive_media_message(db, user_id, partner_id, message)
         else:
-            await message.bot.send_message(
-                partner_id,
-                tr(partner_lang, "Неподдерживаемый тип сообщения.", "Unsupported message type."),
-            )
+            await message.answer(tr(user_lang,
+                "Этот тип сообщения не поддерживается. Отправьте текст, фото или голосовое сообщение.",
+                "This message type is not supported. Send text, a photo or a voice message.",
+                "Цей тип повідомлення не підтримується. Надішліть текст, фото або голосове повідомлення.",
+                "Dieser Nachrichtentyp wird nicht unterstützt. Sende Text, ein Foto oder eine Sprachnachricht."))
     except (TelegramForbiddenError, TelegramBadRequest):
         # Partner is unavailable: end the chat for the sender.
         await end_chat(
@@ -670,6 +682,8 @@ async def _maybe_auto_search(message: Message, db: Database, config: Config, tar
             lang,
             "🔁 Автопоиск включен. Ищем нового собеседника...",
             "🔁 Auto-search enabled. Looking for a new partner...",
+            "🔁 Автопошук увімкнено. Шукаємо нового співрозмовника…",
+            "🔁 Auto-Suche aktiv. Suche einen neuen Gesprächspartner…",
         ),
         reply_markup=searching_keyboard(lang),
     )

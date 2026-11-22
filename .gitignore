@@ -12,3 +12,7 @@ node_modules/
 
 .env
 .vercel
+
+# Public competitor parser runtime data
+data/competitors*.sqlite3*
+data/competitors*.json

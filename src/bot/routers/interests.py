@@ -158,7 +158,7 @@ async def interests_callback(
         )
         await callback.message.answer(
             tr(lang, "Возвращаюсь в меню.", "Returning to menu.", "Повертаюся в меню.", "Zurück zum Menü."),
-            reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
+            reply_markup=main_menu_keyboard(state=get_state_from_snapshot(await get_user_snapshot(db, user_id)), is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
         return
@@ -170,7 +170,7 @@ async def interests_callback(
         )
         await callback.message.answer(
             tr(lang, "Выберите действие в меню.", "Choose an action from the menu.", "Оберіть дію в меню.", "Wähle eine Aktion im Menü."),
-            reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
+            reply_markup=main_menu_keyboard(state=get_state_from_snapshot(await get_user_snapshot(db, user_id)), is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
         return
@@ -193,7 +193,7 @@ async def interests_callback(
         )
         await callback.message.answer(
             tr(lang, "Возвращаюсь в меню.", "Returning to menu.", "Повертаюся в меню.", "Zurück zum Menü."),
-            reply_markup=main_menu_keyboard(is_admin=is_admin(user_id, config), lang=lang),
+            reply_markup=main_menu_keyboard(state=get_state_from_snapshot(await get_user_snapshot(db, user_id)), is_admin=is_admin(user_id, config), lang=lang),
         )
         await callback.answer()
         return

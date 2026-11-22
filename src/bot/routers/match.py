@@ -218,6 +218,8 @@ async def _attempt_match(bot: Bot, db: Database, config: Config, user_id: int) -
             user_lang,
             "✅ Собеседник найден. Пишите сообщение.",
             "✅ Partner found. Start chatting.",
+            "✅ Співрозмовника знайдено. Напишіть привіт!",
+            "✅ Gesprächspartner gefunden. Sag Hallo!",
         ),
         reply_markup=main_menu_keyboard(
             show_end=True,
@@ -232,6 +234,8 @@ async def _attempt_match(bot: Bot, db: Database, config: Config, user_id: int) -
             candidate_lang,
             "✅ Собеседник найден. Пишите сообщение.",
             "✅ Partner found. Start chatting.",
+            "✅ Співрозмовника знайдено. Напишіть привіт!",
+            "✅ Gesprächspartner gefunden. Sag Hallo!",
         ),
         reply_markup=main_menu_keyboard(
             show_end=True,
@@ -348,6 +352,8 @@ async def _search_status_text(db: Database, user_id: int, lang: str) -> str:
             lang,
             "Обновите поиск, если долго нет пары.",
             "Refresh search if no partner is found for a long time.",
+            "Спробуйте запустити пошук ще раз, якщо довго немає співрозмовника.",
+            "Starte die Suche erneut, wenn lange niemand gefunden wird.",
         )
 
     return tr(
@@ -360,6 +366,10 @@ async def _search_status_text(db: Database, user_id: int, lang: str) -> str:
             f"Queue position: {position}/{max(queue_size, position)}\n"
             f"Estimated wait: {_format_eta(eta_seconds, lang)}"
         ),
+        (f"Позиція в черзі: {position}/{max(queue_size, position)}\n"
+         f"Приблизне очікування: {_format_eta(eta_seconds, lang)}"),
+        (f"Warteschlangenposition: {position}/{max(queue_size, position)}\n"
+         f"Geschätzte Wartezeit: {_format_eta(eta_seconds, lang)}"),
     )
 
 
@@ -421,6 +431,7 @@ async def cancel_search(message: Message, db: Database, config: Config) -> None:
         await message.answer(
             tr(lang, "Вы сейчас не в поиске.", "You are not currently searching.", "Ви зараз не в пошуку.", "Du suchst gerade nicht."),
             reply_markup=main_menu_keyboard(
+                state=state,
                 is_admin=is_admin(user_id, config),
                 lang=lang,
             ),
